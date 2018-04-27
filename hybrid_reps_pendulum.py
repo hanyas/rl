@@ -2,7 +2,6 @@ import numpy as np
 import numexpr as ne
 import scipy as sc
 from scipy import integrate
-
 import pickle
 
 from sklearn.metrics import mean_squared_error
@@ -41,17 +40,13 @@ for k in color_names:
 np.random.seed(123)
 
 REG = 1e-75
-
+EXP_MAX = 420.0
+EXP_MIN = -420.0
 
 def lgstc_feat(x, u):
-	# xu = np.hstack((x, u))
-	# data = np.reshape(xu, (-1, xu.shape[-1]), order='C')
-	# poly = PolynomialFeatures(1)
-
-	xu = x
+	xu = np.hstack((x, u))
 	data = np.reshape(xu, (-1, xu.shape[-1]), order='C')
-	poly = PolynomialFeatures(2, interaction_only=True)
-
+	poly = PolynomialFeatures(1)
 	feat = np.reshape(poly.fit_transform(data), (xu.shape[0], -1), order='C')
 	return feat
 
@@ -66,7 +61,7 @@ def logistic(p, feat):
 		par = np.reshape(p, (n_steps, -1, n_features), order='C')
 		a = np.einsum('tk,tlk->tl', feat, par)
 
-	a = np.clip(a, -420.0, 420.0)
+	a = np.clip(a, EXP_MIN, EXP_MAX)
 	expa = ne.evaluate('exp(a)')
 	l = expa / np.sum(expa, axis=1, keepdims=True)
 	return l
@@ -118,9 +113,9 @@ class Policy:
 		self.kff = np.random.randn(n_regions, n_actions)
 		self.cov = np.zeros((n_regions, n_actions, n_actions))
 		for n in range(n_regions):
-			self.cov[n, :, :] = 100.0 * np.eye(n_actions)
+			self.cov[n, :, :] = 10.0 * np.eye(n_actions)
 
-	def actions(self, x, z):
+	def actions(self, z, x):
 		mean = np.dot(self.K[z, :, :], x) + self.kff[z, :]
 		return np.random.normal(mean, np.sqrt(self.cov[z, :, :])).flatten()
 
@@ -135,7 +130,7 @@ class Policy:
 
 class Dynamics:
 
-	def __init__(self, n_states, n_actions, n_regions, n_features, action_limit):
+	def __init__(self, n_states, n_actions, n_regions, n_features, action_limit, state_limit):
 		self.n_states = n_states
 		self.n_actions = n_actions
 		self.n_regions = n_regions
@@ -149,24 +144,41 @@ class Dynamics:
 		self.action_min = - action_limit
 		self.action_max = action_limit
 
-	def simulate(self, x, u):
+		self.state_min = - state_limit
+		self.state_max = state_limit
+
+		self.x_intern = np.zeros((2, ))
+
+	def transform_state(self, state):
+		# [cos, sin, -sin * thd, cos * thd]
+		state[0] = np.remainder(state[0] + np.pi, 2 * np.pi) - np.pi
+		return np.array([np.cos(state[0]), np.sin(state[0]), - np.sin(state[0]) * state[1], np.cos(state[0]) * state[1]])
+
+	def reset(self):
+		self.x_intern = np.array([np.random.uniform(0.01, 2 * np.pi - 0.01), 0.0])
+		# self.x_intern = np.array([np.random.uniform(np.pi - 0.5, np.pi + 0.5), np.random.uniform(-5.0, 5.0)])
+
+		self.x_intern = np.random.multivariate_normal(self.x_intern, 1e-8 * np.eye(2))
+		return self.transform_state(self.x_intern)
+
+	def step(self, u):
 		def dynamics(x, t, u, g, m, l, k):
-			return [x[1], 3 * g * np.sin(x[0]) / l + 3 * u / (m * l ** 2) - 3 * k * x[1] / (m * l ** 2)]
+			# return [x[1], 3 * g * np.sin(x[0]) / l + 3 * u / (m * l ** 2) - 3 * k * x[1] / (m * l ** 2)]
+			return [x[1], g * np.sin(x[0]) / l + u / (m * l ** 2) - k * x[1] / (m * l ** 2)]
 
 		uc = np.clip(u, self.action_min, self.action_max)
 
-		dt = 0.05
+		dt = 0.025
 		g = 9.81
-		l = 0.5
-		m = 10.0
-		k = 0.25
+		l = 1.0
+		m = 1.0
+		k = 0.1
 
-		xn = sc.integrate.odeint(dynamics, x, np.array([0.0, dt]), args=(uc, g, m, l, k))[1, :]
+		self.x_intern = sc.integrate.odeint(dynamics, self.x_intern, np.array([0.0, dt]), args=(uc, g, m, l, k))[1, :]
+		self.x_intern = np.clip(self.x_intern, self.state_min, self.state_max)
+		self.x_intern = np.random.multivariate_normal(self.x_intern, 1e-4 * np.eye(2))
 
-		# clip velocity
-		xn[1] = np.clip(xn[1], -20.0, 20.0)
-
-		return xn, uc
+		return self.transform_state(self.x_intern)
 
 	def load(self, stamp, path):
 		file = open(path + "bw_init_region_" + stamp + ".pickle", "rb")
@@ -218,18 +230,24 @@ class Dynamics:
 		return alpha, norm
 
 
-def reward(x, u, Wx, Wu, g):
-	# transform state for swing up
-	x[:, :, 0] = np.mod(x[:, :, 0] + 0.5 * np.pi, 2 * np.pi) - 0.5 * np.pi
+def cart2pol(state):
+	ang = np.arctan2(state[:, :, 1], state[:, :, 0])
+	ang = np.remainder(ang, 2.0 * np.pi)
+	vel = - state[:, :, 1] * state[:, :, 2] + state[:, :, 0] * state[:, :, 3]
+	polar = np.stack((ang, vel), axis=2)
+	return polar
 
-	r = - np.einsum('ntk,kh,nth->nt', x - g, Wx, x - g) - np.einsum('ntk,kh,nth->nt', u, Wu, u)
+
+def reward(x, u, Wx, Wu, g):
+	xp = cart2pol(x)
+	r = - np.einsum('ntk,kh,nth->nt', xp - g, Wx, xp - g) - np.einsum('ntk,kh,nth->nt', u, Wu, u)
 	return r
 
 
 def dual_eta(eta, omega, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 	adv = r + gamma * np.dot(qfeatures, omega) - np.dot(vfeatures, omega) + (1.0 - gamma) * np.mean(np.dot(ivfeatures, omega), axis=0, keepdims=True)
 	delta = adv - np.max(adv)
-	w = np.exp(np.clip(delta / eta, -420.0, 420.0))
+	w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
 	g = eta * epsilon + np.max(adv) + eta * np.log(np.mean(w, axis=0, keepdims=True))
 	return g
 
@@ -237,7 +255,7 @@ def dual_eta(eta, omega, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 def grad_eta(eta, omega, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 	adv = r + gamma * np.dot(qfeatures, omega) - np.dot(vfeatures, omega) + (1.0 - gamma) * np.mean(np.dot(ivfeatures, omega), axis=0, keepdims=True)
 	delta = adv - np.max(adv)
-	w = np.exp(np.clip(delta / eta, -420.0, 420.0))
+	w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
 	deta = epsilon + np.log(np.mean(w, axis=0, keepdims=True)) - np.sum(w * delta, axis=0, keepdims=True) / (eta * np.sum(w, axis=0, keepdims=True))
 	return deta
 
@@ -245,7 +263,7 @@ def grad_eta(eta, omega, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 def dual_omega(omega, eta, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 	adv = r + gamma * np.dot(qfeatures, omega) - np.dot(vfeatures, omega) + (1.0 - gamma) * np.mean(np.dot(ivfeatures, omega), axis=0, keepdims=True)
 	delta = adv - np.max(adv)
-	w = np.exp(np.clip(delta / eta, -420.0, 420.0))
+	w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
 	g = np.max(adv) + eta * np.log(np.mean(w, axis=0, keepdims=True))
 	return g
 
@@ -253,38 +271,55 @@ def dual_omega(omega, eta, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 def grad_omega(omega, eta, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
 	adv = r + gamma * np.dot(qfeatures, omega) - np.dot(vfeatures, omega) + (1.0 - gamma) * np.mean(np.dot(ivfeatures, omega), axis=0, keepdims=True)
 	delta = adv - np.max(adv)
-	w = np.exp(np.clip(delta / eta, -420.0, 420.0))
+	w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
 	domega = (1.0 - gamma) * np.mean(ivfeatures, axis=0, keepdims=False) + np.sum(w[:, None] * (gamma * qfeatures - vfeatures), axis=0, keepdims=False) / np.sum(w, axis=0, keepdims=False)
 	return domega
 
 
+def hess_omega(omega, eta, epsilon, gamma, qfeatures, vfeatures, ivfeatures, r):
+	adv = r + gamma * np.dot(qfeatures, omega) - np.dot(vfeatures, omega) + (1.0 - gamma) * np.mean(np.dot(ivfeatures, omega), axis=0, keepdims=True)
+	delta = adv
+	w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+	w = w / np.sum(w, axis=0, keepdims=True)
+
+	ui = gamma * qfeatures - vfeatures
+	uj = np.sum(w[:, None] * ui, axis=0, keepdims=True)
+	tmp = ui - uj
+
+	homega = 1./eta * np.einsum('n,nk,nh->kh', w, tmp, tmp)
+	return homega
+
+
 class HyREPS:
 
-	def __init__(self, n_states, n_actions, n_regions, n_rollouts, n_steps, n_replace, n_iter, kl_bound, discount, action_limit):
+	def __init__(self, n_states, n_actions, n_regions, n_rollouts, n_steps, n_replace, n_filter, n_iter, kl_bound, discount, action_limit, state_limit):
 		self.n_states = n_states
 		self.n_actions = n_actions
 		self.n_regions = n_regions
 		self.n_rollouts = n_rollouts
 		self.n_steps = n_steps
 		self.n_replace = n_replace
+		self.n_filter = n_filter
 		self.n_iter = n_iter
 		self.kl_bound = kl_bound
 		self.discount = discount
 
-		self.n_sim_rollouts = 1 * n_rollouts
+		self.n_sim_rollouts = n_rollouts
 		self.n_sim_steps = n_steps
 
-		self.n_lgstc_features = 4 #n_states + n_actions + 1
-		self.n_vfeatures = int(2 * n_states + sc.special.comb(n_states, 2) + 1)
+		self.n_lgstc_features = n_states + n_actions + 1
+		# self.n_vfeatures = int(2 * n_states + sc.special.comb(n_states, 2) + 1)
+		self.n_vfeatures = int(2 * n_states + sc.special.comb(n_states, 2))
 
-		self.dyn = Dynamics(n_states, n_actions, n_regions, n_features=self.n_lgstc_features, action_limit=action_limit)
-		self.dyn.load("15:17:32", "data/pendulum/")
+		self.dyn = Dynamics(n_states, n_actions, n_regions, n_features=self.n_lgstc_features, action_limit=action_limit, state_limit=state_limit)
+		# self.dyn.load("10:16:10", "data/pendulum/")
+		# self.dyn.load("16:49:04", "data/pendulum/")
+		self.dyn.load("10:31:10", "data/pendulum/")
 
 		self.ctl = Policy(n_states, n_actions, n_regions)
 
 		self.Z = np.zeros((n_rollouts, n_steps), np.int64)
 		self.X = np.zeros((n_rollouts, n_steps, n_states))
-		self.X_tmp = np.zeros((n_rollouts, n_steps, n_states))
 		self.U = np.zeros((n_rollouts, n_steps, n_actions))
 		self.U_sat = np.zeros((n_rollouts, n_steps, n_actions))
 		self.R = np.zeros((n_rollouts, n_steps, n_actions))
@@ -317,53 +352,65 @@ class HyREPS:
 		self.omega = np.random.randn(n_regions * self.n_vfeatures)
 		self.eta = np.array([1e3])
 
-	def sample(self, n_total_rollouts, n_steps, n_replace, init, Z, X, X_tmp, U, U_sat):
+	def sample(self, n_total_rollouts, n_steps, n_replace, init, Z, X, U, U_sat, reset=True):
 		if init == True:
 			n_rollouts = n_total_rollouts
 		else:
 			n_rollouts = n_replace
 
 		for n in range(n_rollouts):
-			# tmp = np.hstack((np.random.uniform(0.01, 2 * np.pi - 0.01), 0.0))
-			x_tmp = np.hstack((np.random.uniform(np.pi - np.pi/6, np.pi + np.pi/6), 0.0))
-
-			x_aux = x_tmp.copy()
-			x_aux[0] = np.mod(x_aux[0], 2 * np.pi)
-
+			x_aux = self.dyn.reset()
 			z_aux = np.argmax(self.dyn.init_region.rvs())
+			u_aux = self.ctl.actions(z_aux, x_aux)
 
-			u_aux = self.ctl.actions(x_aux, z_aux)
+			# do filtering
+			Z_aux = np.zeros((1, self.n_filter), np.int64)
+			X_aux = np.zeros((1, self.n_filter, self.n_states))
+			U_aux = np.zeros((1, self.n_filter, self.n_actions))
+
+			Z_aux[0, 0] = z_aux
+			X_aux[0, 0, :] = x_aux
+			U_aux[0, 0, :] = np.clip(u_aux, self.dyn.action_min, self.dyn.action_max)
+
+			for t in range(1, self.n_filter):
+				X_aux[0, t, :] = self.dyn.step(U_aux[0, t - 1, :])
+				p, _ = self.dyn.forward(X_aux[0, :t + 1, :], U_aux[0, :t + 1, :])
+				Z_aux[0, t] = np.argmax(p[-1, :])
+
+				U_aux[0, t, :] = self.ctl.actions(Z_aux[0, t], X_aux[0, t, :])
+				U_aux[0, t, :] = np.clip(U_aux[0, t, :], self.dyn.action_min, self.dyn.action_max)
+
+			z_aux = Z_aux[0, -1]
+			x_aux = X_aux[0, -1, :]
+			u_aux = U_aux[0, -1, :]
 			u_sat_aux = np.clip(u_aux, self.dyn.action_min, self.dyn.action_max)
 
 			# roll arrays
 			Z = np.roll(Z, 1, axis=0)
 			X = np.roll(X, 1, axis=0)
-			X_tmp = np.roll(X_tmp, 1, axis=0)
 			U = np.roll(U, 1, axis=0)
 			U_sat = np.roll(U_sat, 1, axis=0)
 
 			# replace first rollout and init first time step
 			Z[0, 0] = z_aux
 			X[0, 0, :] = x_aux
-			X_tmp[0, 0, :] = x_tmp
 			U[0, 0, :] = u_aux
 			U_sat[0, 0, :] = u_sat_aux
 
 			for t in range(1, n_steps):
-				X_tmp[0, t, :], _ = self.dyn.simulate(X_tmp[0, t - 1, :], U_sat[0, t - 1, :])
+				prob = np.random.binomial(1, 1.0 - self.discount)
+				if reset and prob:
+					X[0, t, :] = self.dyn.reset()
+					Z[0, t] = np.argmax(self.dyn.init_region.rvs())
+				else:
+					X[0, t, :] = self.dyn.step(U_sat[0, t - 1, :])
+					p, _ = self.dyn.forward(X[0, :t + 1, :], U_sat[0, :t + 1, :])
+					Z[0, t] = np.argmax(p[-1, :])
 
-				# transform angle
-				X[0, t, :] = X_tmp[0, t, :].copy()
-				X[0, t, 0] = np.mod(X[0, t, 0], 2 * np.pi)
-
-				p, _ = self.dyn.forward(X[0, :t + 1, :], U_sat[0, :t + 1, :])
-				Z[0, t] = np.argmax(p[-1, :])
-
-				U[0, t, :] = self.ctl.actions(X[0, t, :], Z[0, t])
+				U[0, t, :] = self.ctl.actions(Z[0, t], X[0, t, :])
 				U_sat[0, t, :] = np.clip(U[0, t, :], self.dyn.action_min, self.dyn.action_max)
 
-
-		R = reward(X_tmp, U_sat, self.state_weight, self.action_weight, self.goal)
+		R = reward(X, U_sat, self.state_weight, self.action_weight, self.goal)
 		r = R[:, :-1].flatten(order='C')
 
 		zi = np.reshape(Z[:, 0], (-1,), order='C')
@@ -381,68 +428,62 @@ class HyREPS:
 		un = np.reshape(U[:, 1:, :], (-1, self.n_actions), order='C')
 		un_sat = np.reshape(U_sat[:, 1:, :], (-1, self.n_actions), order='C')
 
-		return zn, xn, un, un_sat, z, x, u, u_sat, r, zi, xi, ui, ui_sat, Z, X, X_tmp, U, U_sat, R
+		return zn, xn, un, un_sat, z, x, u, u_sat, r, zi, xi, ui, ui_sat, Z, X, U, U_sat, R
 
 	def evaluate(self, n_rollouts, n_steps):
 		Z = np.zeros((n_rollouts, n_steps), np.int64)
 		X = np.zeros((n_rollouts, n_steps, self.n_states))
-		X_tmp = np.zeros((n_rollouts, n_steps, self.n_states))
 		U = np.zeros((n_rollouts, n_steps, self.n_actions))
 		U_sat = np.zeros((n_rollouts, n_steps, self.n_actions))
 
-		zn, xn, un, un_sat,\
-		z, x, u, u_sat, r,\
-		zi, xi, ui, ui_sat,\
-		Z, X, X_tmp, U, U_sat, R = self.sample(n_rollouts, n_steps, n_rollouts, True, Z, X, X_tmp, U, U_sat)
+		return self.sample(n_rollouts, n_steps, n_rollouts, True, Z, X, U, U_sat, False)
 
-		return Z, X, U, U_sat, R
+	def get_vfeatures(self, z, x):
+		# poly = PolynomialFeatures(2)
+		poly = PolynomialFeatures(2, include_bias=False)
 
-	def get_vfeatures(self, init=0):
-		poly = PolynomialFeatures(2)
-
-		if init == 0:
-			x = self.x
-			z = self.z
-		else:
-			x = self.xi
-			z = self.zi
-
-		phi = np.zeros((x.shape[0], self.n_regions * self.n_vfeatures))
+		vfeat = np.zeros((x.shape[0], self.n_regions * self.n_vfeatures))
 
 		for n in range(self.n_regions):
 			i = np.where(z == n)[0]
 			if i.size != 0:
 				idx = np.ix_(i, range(n * self.n_vfeatures, n * self.n_vfeatures + self.n_vfeatures))
-				phi[idx] = poly.fit_transform(x[i])
+				vfeat[idx] = poly.fit_transform(x[i])
 
-		return phi
+		return vfeat
 
-	def get_qfeatures(self):
-		poly = PolynomialFeatures(2)
-		pred = lgstc_feat(self.x, self.u_sat)
+	def get_qfeatures(self, zn, z, x, u_sat):
+		# poly = PolynomialFeatures(2)
+		poly = PolynomialFeatures(2, include_bias=False)
 
-		self.qfeatures = np.zeros((self.x.shape[0], self.n_regions * self.n_vfeatures))
+		pred = lgstc_feat(x, u_sat)
+
+		qfeat = np.zeros((x.shape[0], self.n_regions * self.n_vfeatures))
 
 		for n in range(self.n_regions):
-			i = np.where(self.zn == n)[0]
+			i = np.where(zn == n)[0]
 			if i.size != 0:
-				lgstc = logistic(self.dyn.logistic_model.par[self.z[i], :], pred[i])
-				aux = np.einsum('kh,th->tk', self.dyn.linear_models[n].A, self.x[i]) \
-				      + np.einsum('kh,th->tk', self.dyn.linear_models[n].B, self.u_sat[i]) + self.dyn.linear_models[n].C
+				lgstc = logistic(self.dyn.logistic_model.par[z[i], :], pred[i])
+				aux = np.einsum('kh,th->tk', self.dyn.linear_models[n].A, x[i]) \
+				      + np.einsum('kh,th->tk', self.dyn.linear_models[n].B, u_sat[i]) + self.dyn.linear_models[n].C
 
 				ind = np.triu_indices(n=self.n_states, k=0, m=self.n_states)
 				vec = self.dyn.linear_models[n].cov[ind]
-				vec = np.hstack((np.zeros(self.n_states + 1), vec))
+
+				# vec = np.hstack((np.zeros(self.n_states + 1), vec))
+				vec = np.hstack((np.zeros(self.n_states), vec))
 
 				feat = poly.fit_transform(aux) + np.tile(vec, (aux.shape[0], 1))
 
-				self.qfeatures[i, :] = np.tile(feat, (1, self.n_regions)) * np.repeat(lgstc, self.n_vfeatures, axis=1)
+				qfeat[i, :] = np.tile(feat, (1, self.n_regions)) * np.repeat(lgstc, self.n_vfeatures, axis=1)
+
+		return qfeat
 
 	def kl_divergence(self):
 		adv = self.reward + self.discount * np.dot(self.qfeatures, self.omega) - np.dot(self.vfeatures, self.omega) \
 		      + (1.0 - self.discount) * np.mean(np.dot(self.ivfeatures, self.omega), axis=0, keepdims=True)
 		delta = adv
-		w = np.exp(np.clip(1.0 / self.eta * delta, -420.0, 420.0))
+		w = np.exp(np.clip(1.0 / self.eta * delta, EXP_MIN, EXP_MAX))
 		w = w[w >= 1e-45]
 		w = w / np.mean(w, axis=0, keepdims=True)
 		return np.mean(w * np.log(w), axis=0, keepdims=True)
@@ -453,7 +494,7 @@ class HyREPS:
 		adv = self.reward + self.discount * np.dot(self.qfeatures, self.omega) - np.dot(self.vfeatures, self.omega) \
 		      + (1.0 - self.discount) * np.mean(np.dot(self.ivfeatures, self.omega), axis=0, keepdims=True)
 		delta = adv
-		w = np.exp(np.clip(delta / self.eta, -420.0, 420.0))
+		w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
 
 		for n in range(self.n_regions):
 			i = np.where(self.z == n)[0]
@@ -467,48 +508,54 @@ class HyREPS:
 
 				Z = (np.square(np.sum(w[i], axis=0, keepdims=True)) - np.sum(np.square(w[i]), axis=0, keepdims=True)) / np.sum(w[i], axis=0, keepdims=True)
 				tmp = self.u_sat[i] - psi @ aux
-				self.ctl.cov[n, :, :] = np.einsum('t,tk,th->kh', w[i], tmp, tmp) / Z
+				self.ctl.cov[n, :, :] = np.einsum('t,tk,th->kh', w[i], tmp, tmp) / (Z + 1e-12)
 
 
-hyreps = HyREPS(n_states=2, n_actions=1, n_regions=3,
-				n_rollouts=50, n_steps=50, n_replace=10,
-				n_iter=25, kl_bound=0.250, discount=0.98, action_limit=30.0)
+hyreps = HyREPS(n_states=4, n_actions=1, n_regions=4,
+				n_rollouts=50, n_steps=50, n_replace=45, n_filter=10,
+				n_iter=15, kl_bound=0.1, discount=0.99,
+				action_limit=8.0, state_limit=np.array([np.inf, 20.0]))
 
 for it in range(hyreps.n_iter):
 	hyreps.zn, hyreps.xn, hyreps.un, hyreps.un_sat, \
 	hyreps.z, hyreps.x, hyreps.u, hyreps.u_sat, hyreps.reward, \
 	hyreps.zi, hyreps.xi, hyreps.ui, hyreps.ui_sat,\
-	hyreps.Z, hyreps.X, hyreps.X_tmp, hyreps.U, hyreps.U_sat, hyreps.R = hyreps.sample(hyreps.n_rollouts, hyreps.n_steps, hyreps.n_replace,
-																it==0, hyreps.Z, hyreps.X, hyreps.X_tmp, hyreps.U, hyreps.U_sat)
+	hyreps.Z, hyreps.X, hyreps.U, hyreps.U_sat, hyreps.R = hyreps.sample(hyreps.n_rollouts, hyreps.n_steps, hyreps.n_replace,
+																			it==0, hyreps.Z, hyreps.X, hyreps.U, hyreps.U_sat)
 
-	hyreps.vfeatures = hyreps.get_vfeatures()
-	hyreps.ivfeatures = hyreps.get_vfeatures(init=1)
-	hyreps.get_qfeatures()
+	hyreps.ivfeatures = hyreps.get_vfeatures(hyreps.zi, hyreps.xi)
+	hyreps.vfeatures = hyreps.get_vfeatures(hyreps.z, hyreps.x)
+	hyreps.qfeatures = hyreps.get_qfeatures(hyreps.zn, hyreps.z, hyreps.x, hyreps.u_sat)
 
 	kl_div = 99.0
 	inner = 0
 	while (np.fabs(kl_div - hyreps.kl_bound) >= 0.1 * hyreps.kl_bound):
-		res = sc.optimize.minimize(dual_eta, 1000.0 * np.ones((1,)), method='L-BFGS-B', jac=grad_eta,
+		res = sc.optimize.minimize(dual_eta, 1000.0, method='L-BFGS-B', jac=grad_eta,
 			args=(hyreps.omega, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward), bounds=((1e-8, 1e8),))
 		# print(res)
 
-		# check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, hyreps.omega, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward)
-		# print('Eta Error', check)
+		check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, hyreps.omega, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward)
+		print('Eta Error', check)
 
 		hyreps.eta = res.x
 
 		res = sc.optimize.minimize(dual_omega, hyreps.omega, method='BFGS', jac=grad_omega,
 			args=(hyreps.eta, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward),
-			options={'gtol': 1e-4, 'norm': -np.inf})
+			options={'maxiter': 1000, 'gtol': 1e-4, 'norm': -np.inf})
+
+		# res = sc.optimize.minimize(dual_omega, hyreps.omega, method='dogleg', jac=grad_omega, hess=hess_omega,
+		# 	args=(hyreps.eta, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward),
+		# 			options={'gtol': 1e-6, 'disp': False, 'inexact': True})
+
 		# print(res)
 
-		# check = sc.optimize.check_grad(dual_omega, grad_omega, res.x, hyreps.eta, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward)
-		# print('Omega Error', check)
+		check = sc.optimize.check_grad(dual_omega, grad_omega, res.x, hyreps.eta, hyreps.kl_bound, hyreps.discount, hyreps.qfeatures, hyreps.vfeatures, hyreps.ivfeatures, hyreps.reward)
+		print('Omega Error', check)
 
 		hyreps.omega = res.x
 
 		kl_div = hyreps.kl_divergence()
-		# print(kl_div)
+		print(kl_div)
 		inner = inner + 1
 		if inner > 50:
 			break
@@ -516,20 +563,21 @@ for it in range(hyreps.n_iter):
 	hyreps.update_policy()
 
 	# evaluation
-	# Z_eval, X_eval, U_eval, U_sat_eval, RWRD_eval = hyreps.evaluate(hyreps.n_sim_rollouts, hyreps.n_sim_steps)
+	zn, xn, un, un_sat, \
+	z, x, u, u_sat, r, \
+	zi, xi, ui, ui_sat, \
+	Z, X, U, U_sat, R = hyreps.evaluate(hyreps.n_sim_rollouts, hyreps.n_sim_steps)
 
-	print('Iteration:', it, 'Reward:', np.mean(hyreps.reward), 'KL:', kl_div, 'Cov', *hyreps.ctl.cov)
+	print('Iteration:', it, 'Reward:', np.mean(r), 'KL:', kl_div, 'Cov:', *hyreps.ctl.cov)
 
 for n in range(1):
-	rollout = np.random.randint(0, hyreps.n_rollouts)
-	plt.subplot(321)
-	plt.plot(hyreps.X[rollout, :, 0])
-	plt.subplot(322)
-	plt.plot(hyreps.X[rollout, :, 1])
-	plt.subplot(323)
-	plt.plot(hyreps.R[rollout, :])
-	plt.subplot(325)
-	plt.plot(hyreps.U_sat[rollout, :, :])
-	plt.subplot(326)
-	plt.plot(hyreps.Z[rollout, :])
+	rollout = np.random.randint(0, hyreps.n_sim_rollouts)
+	plt.subplot(221)
+	plt.plot(X[rollout, :, 0:2])
+	plt.subplot(222)
+	plt.plot(R[rollout, :])
+	plt.subplot(223)
+	plt.plot(U_sat[rollout, :, :])
+	plt.subplot(224)
+	plt.plot(Z[rollout, :])
 plt.show()

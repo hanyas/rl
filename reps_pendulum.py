@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import matplotlib._color_data as mcd
 import seaborn as sns
 
+# import os
+# os.environ['DISPLAY'] = 'russell:11.0'
+
+
 np.set_printoptions(precision=5)
 
 sns.set_style("white")
@@ -32,7 +36,7 @@ colors = []
 for k in color_names:
 	colors.append(mcd.XKCD_COLORS['xkcd:'+k].upper())
 
-# np.random.seed(99)
+np.random.seed(99)
 
 EXP_MAX = 700.0
 EXP_MIN = -700.0
@@ -57,7 +61,7 @@ class PolicyBayes:
 	def __init__(self, n_features, n_actions):
 		self.n_features = n_features
 		self.n_actions = n_actions
-		self.alpha = 1e-5
+		self.alpha = 1e-4
 		self.beta = 1e-1
 
 		self.K = np.zeros((n_actions, n_features))
@@ -85,7 +89,7 @@ class Dynamics:
 
 	def reset(self):
 		# self.x_intern = np.array([np.random.uniform(0.01, 2 * np.pi - 0.01), 0.0])
-		self.x_intern = np.array([np.random.uniform(np.pi - np.pi/3, np.pi + np.pi/3), 0.0])
+		self.x_intern = np.array([np.random.uniform(np.pi - np.pi/3.0, np.pi + np.pi/3.0), 0.0])
 		self.x_intern = np.random.multivariate_normal(self.x_intern, 1e-8 * np.eye(2))
 
 		xt = transform_angle(self.x_intern)
@@ -93,19 +97,13 @@ class Dynamics:
 		return xc
 
 	def step(self, u):
-		def dynamics(x, t, u, g, m, l, k):
-			return [x[1], 3 * g * np.sin(x[0]) / l + 3 * u / (m * l ** 2) - 3 * k * x[1] / (m * l ** 2)]
-			# return [x[1], g * np.sin(x[0]) / l + u / (m * l ** 2) - k * x[1] / (m * l ** 2)]
-
 		uc = np.clip(u, self.action_min, self.action_max)
 
-		dt = 0.05
-		g = 9.81
-		l = 0.5
-		m = 10.0
-		k = 0.25
+		dt, g = 0.05, 9.81
+		# l, m, k = 0.5, 10.0, 0.25
+		l, m, k = 1.0, 0.5, 0.1
 
-		self.x_intern = sc.integrate.odeint(dynamics, self.x_intern, np.array([0.0, dt]), args=(uc, g, m, l, k))[1, :]
+		self.x_intern = sc.integrate.odeint(pendulum_ode, self.x_intern, np.array([0.0, dt]), args=(uc, g, m, l, k))[1, :]
 		self.x_intern[0] = np.remainder(self.x_intern[0], 2 * np.pi)
 		self.x_intern = np.clip(self.x_intern, self.state_min, self.state_max)
 		self.x_intern = np.random.multivariate_normal(self.x_intern, 1e-8 * np.eye(2))
@@ -113,6 +111,11 @@ class Dynamics:
 		xt = transform_angle(self.x_intern)
 		xc = pol2cart(xt)
 		return xc
+
+
+def pendulum_ode(x, t, u, g, m, l, k):
+	return [x[1], 3 * g * np.sin(x[0]) / l + 3 * u / (m * l ** 2) - 3 * k * x[1] / (m * l ** 2)]
+	# return [x[1], g * np.sin(x[0]) / l + u / (m * l ** 2) - k * x[1] / (m * l ** 2)]
 
 
 def transform_angle(state):
@@ -189,11 +192,11 @@ def fourier_features(x, n_feat, freq, shift):
 	if x.ndim > 1:
 		phi = np.zeros((x.shape[0], n_feat))
 		for i in range(n_feat):
-			phi[:, i] = np.sin(np.einsum('k,nk->n', freq[i, :], x) / 2.5 + shift[i])
+			phi[:, i] = np.sin(np.einsum('k,nk->n', freq[i, :], x) / 2.0 + shift[i])
 	else:
 		phi = np.zeros((n_feat, ))
 		for i in range(n_feat):
-			phi[i] = np.sin(freq[i, :] @ x / 2.5 + shift[i])
+			phi[i] = np.sin(freq[i, :] @ x / 2.0 + shift[i])
 
 	return phi
 
@@ -224,8 +227,11 @@ class REPS:
 		self.vfeat_freq = np.random.randn(self.n_vfeatures, self.n_states)
 		self.vfeat_shift = np.random.uniform(-np.pi, np.pi, size=self.n_vfeatures)
 
-		self.pfeat_freq = np.random.randn(self.n_pfeatures, self.n_states)
-		self.pfeat_shift = np.random.uniform(-np.pi, np.pi, size=self.n_pfeatures)
+		self.pfeat_freq = self.vfeat_freq
+		self.pfeat_shift = self.vfeat_shift
+
+		# self.pfeat_freq = np.random.randn(self.n_pfeatures, self.n_states)
+		# self.pfeat_shift = np.random.uniform(-np.pi, np.pi, size=self.n_pfeatures)
 
 		self.dyn = Dynamics(n_states, n_actions, action_limit=action_limit, state_limit=state_limit)
 
@@ -346,12 +352,12 @@ class REPS:
 		psi = self.get_pfeatures(self.x)
 		wm = np.diagflat(w.flatten())
 
-		aux = np.linalg.inv((psi.T @ wm @ psi) + 1e-24 * np.eye(self.n_pfeatures)) @ psi.T @ wm @ self.u_sat
+		aux = np.linalg.inv((psi.T @ wm @ psi) + 1e-16 * np.eye(self.n_pfeatures)) @ psi.T @ wm @ self.u_sat
 		self.ctl.K = aux.T
 
 		Z = (np.square(np.sum(w, axis=0, keepdims=True)) - np.sum(np.square(w), axis=0, keepdims=True)) / np.sum(w, axis=0, keepdims=True)
 		tmp = self.u_sat - psi @ self.ctl.K.T
-		self.ctl.cov = np.einsum('t,tk,th->kh', w, tmp, tmp) / Z
+		self.ctl.cov = np.einsum('t,tk,th->kh', w, tmp, tmp) / (Z + 1e-16)
 
 	def bayes_policy(self):
 		adv = self.reward + self.discount * np.dot(self.nvfeatures, self.omega) - np.dot(self.vfeatures, self.omega) \
@@ -365,12 +371,17 @@ class REPS:
 		self.ctl.Sn = np.linalg.inv(self.ctl.beta * psi.T @ wm @ psi +  self.ctl.alpha * np.eye(self.n_pfeatures))
 		self.ctl.K = (psi.T @ wm @ self.u_sat).T
 
+# reps = REPS(n_states=4, n_actions=1,
+# 			n_rollouts=25, n_steps=100, n_replace=25,
+# 			n_iter=15, kl_bound=0.5, discount=0.985,
+# 			action_limit=30.0, state_limit=np.array([np.inf, 20.0]),
+# 			n_vfeat=100, n_pfeat=100)
 
 reps = REPS(n_states=4, n_actions=1,
 			n_rollouts=25, n_steps=100, n_replace=25,
-			n_iter=15, kl_bound=0.5, discount=0.985,
-			action_limit=30.0, state_limit=np.array([np.inf, 20.0]),
-			n_vfeat=125, n_pfeat=125)
+			n_iter=15, kl_bound=0.5, discount=0.98,
+			action_limit=3.5, state_limit=np.array([np.inf, 20.0]),
+			n_vfeat=100, n_pfeat=100)
 
 for it in range(reps.n_iter):
 	reps.xn, reps.un, reps.un_sat, \
@@ -386,8 +397,8 @@ for it in range(reps.n_iter):
 	kl_div = 99.0
 	inner = 0
 	while (np.fabs(kl_div - reps.kl_bound) >= 0.1 * reps.kl_bound):
-		res = sc.optimize.minimize(dual_eta, 10.0, method='L-BFGS-B', jac=grad_eta,
-			args=(reps.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.reward), bounds=((1e-8, 1e8),))
+		res = sc.optimize.minimize(dual_eta, reps.eta, method='L-BFGS-B', jac=grad_eta,
+									args=(reps.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.reward), bounds=((1e-8, 1e8),))
 		# print(res)
 
 		# check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, reps.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.reward)
@@ -399,7 +410,7 @@ for it in range(reps.n_iter):
 		# 	args=(reps.eta, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.reward))
 
 		res = sc.optimize.minimize(dual_omega, reps.omega, method='trust-exact', jac=grad_omega, hess=hess_omega,
-			args=(reps.eta, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.reward))
+									args=(reps.eta, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.reward))
 
 		# print(res)
 
@@ -441,21 +452,3 @@ for rollout in range(reps.n_sim_rollouts):
 	plt.title('Action')
 	plt.plot(U_sat[rollout, :, :])
 plt.show()
-
-# plt.figure()
-# Ang = np.linspace(0.0, 2.0 * np.pi, 100)
-# Vel = np.linspace(-20.0, 20.0, 100)
-#
-# ANG, VEL = np.meshgrid(Ang, Vel)
-#
-# VAL = np.zeros((100, 100))
-#
-# for i in range(100):
-# 	for j in range(100):
-# 		pol = np.stack((ANG[i, j], VEL[i, j]))
-# 		pol = transform_angle(pol)
-# 		cart = pol2cart(pol)
-# 		VAL[i, j] = reps.get_vfeatures(cart) @ reps.omega
-#
-# cs = plt.contourf(ANG, VEL, VAL)
-# plt.show()
