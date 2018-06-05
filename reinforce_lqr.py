@@ -8,9 +8,9 @@ np.random.seed(1337)
 thetai = np.random.randn(2,) + 1.0
 sigmai = 0.1
 
-N = 1000
-L = 50
-C = 50
+N = 500
+L = 100
+C = 250
 gamma = 0.999
 
 dt = 0.01
