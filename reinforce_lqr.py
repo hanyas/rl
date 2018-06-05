@@ -1,21 +1,24 @@
 import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import PolynomialFeatures
 
 
-# np.random.seed(99)
+np.random.seed(1337)
 
 thetai = np.random.randn(2,) + 1.0
 sigmai = 0.1
 
-N = 100
-L = 10
-C = 250
-gamma = 0.99
+N = 1000
+L = 50
+C = 50
+gamma = 0.999
 
 dt = 0.01
 
-Q = 1e1
-H = 1e-1
+Q = 1e2
+H = 1e-3
 
+poly = PolynomialFeatures(1)
 
 def dynamics(x, u):
 	# x' = x + u
@@ -27,8 +30,8 @@ def reward(x, u):
 
 
 def actions(theta, sigma, x):
-	mean = np.column_stack((x, np.ones(x.shape[0])))
-	return np.random.normal(mean @ theta, sigma)
+	feat = poly.fit_transform(x.reshape(-1, 1))
+	return np.random.normal(feat @ theta, sigma)
 
 
 def simulate(theta, sigma, xi, N, L, gamma):
@@ -53,17 +56,20 @@ def simulate(theta, sigma, xi, N, L, gamma):
 for _ in range(0, C):
 	xi = np.random.uniform(-1.0, 1.0, (N,))
 	X, U, R = simulate(thetai, sigmai, xi, N, L, gamma)
-	r = np.sum(R, axis=1, keepdims=False)
+	r = np.sum(R, axis=1, keepdims=True)
 	print('Reward', np.mean(r, axis=0, keepdims=False))
 
-	dlog = np.zeros((N, 2))
-	for n in range(0, N):
-		for l in range(0, L):
-			psi = np.hstack([X[n, l], 1.0])
-			dlog[n, :] = dlog[n, :] + (U[n, l] - psi @ thetai) * psi / np.square(sigmai)
+	feat = poly.fit_transform(X.reshape(N * L, 1))
+	feat = np.reshape(feat, (N, L, 2))
 
-	b = np.sum(np.square(dlog) * r[:, None], axis=0, keepdims=False) / np.sum(np.square(dlog), axis=0, keepdims=False)
-	dj = np.mean(dlog * (r[:, None] - b), axis=0, keepdims=False)
-	thetai = thetai + 0.01 * dj / L
+	dlog = np.einsum('nl,nlk->nk', U - np.einsum('nlk,k->nl', feat, thetai), feat) / np.square(sigmai)
+
+	b = np.sum(np.square(dlog) * r, axis=0, keepdims=False) / np.sum(np.square(dlog), axis=0, keepdims=False)
+
+	dj = np.mean(dlog * (r - b), axis=0, keepdims=False)
+	thetai = thetai + 0.005 * dj / L
 
 print(thetai)
+
+plt.plot(X[::10, :].T)
+plt.show()
