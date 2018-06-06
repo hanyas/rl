@@ -3,13 +3,12 @@ from gym import envs
 import numpy as np
 from matplotlib import pyplot as plt
 
-env = gym.make('FrozenLake-v0')
-
+np.random.seed(1337)
 
 def greedy(state, eps, n_actions):
 	pmf = eps / n_actions * np.ones((n_actions, 1))
 	idx = np.argmax(q_function[state])
-	pmf[idx] = 1.0 - np.sum(np.concatenate((pmf[:idx], pmf[(idx + 1):])), axis=0)
+	pmf[idx] = 1.0 - np.sum(np.concatenate((pmf[:idx], pmf[idx+1:])), axis=0)
 	p = np.random.multinomial(1, pmf)
 	return np.argmax(p)
 
@@ -20,25 +19,28 @@ def softmax(state, q_function, beta):
 	return np.argmax(p)
 
 
+env = gym.make('FrozenLake-v0')
+
 n_states = env.observation_space.n
 n_actions = env.action_space.n
 
-q_function = 10 * np.ones((n_states, n_actions))
+q_function = np.zeros((n_states, n_actions))
 
 score = np.empty((0, 1))
 td_error = np.empty((0, 1))
 
-episodes = 1000
+episodes = 10000
 steps = 500
 
-alpha = 0.2
-gamma = 0.99
+alpha = 0.1
+gamma = 0.95
 beta = 0.98
 
 for i in range(0, episodes):
 	state = env.reset()
+
 	# eps = 1.0 / (1.0 * (i + 1.0))
-	beta = beta * 0.995
+	beta = beta * 0.9995
 
 	for j in range(0, steps):
 		# action = greedy(state, eps, n_actions)
