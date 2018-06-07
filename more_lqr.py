@@ -35,7 +35,7 @@ for k in color_names:
 	colors.append(mcd.XKCD_COLORS['xkcd:'+k].upper())
 
 
-# np.random.seed(99)
+np.random.seed(1337)
 
 
 class Pi:
@@ -52,18 +52,18 @@ class Quad:
 
 
 def func(x):
-	# # quadratic function
+	# quadratic function
 	# Q = np.eye(2)
 	# x = x - 3.0
 	# return - np.einsum('nk,kh,nh->n', x, Q, x)
 
-	# # rosenbrock
+	# rosenbrock
 	# r = np.empty((x.shape[0],))
 	# for i in range(x.shape[0]):
 	# 	r[i] = - ((1.0 - x[i, 0])**2 + 100.0 * (x[i, 1] - x[i, 0]**2)**2)
 	# return r
 
-	# rastrigin
+	# # rastrigin
 	r = np.empty((x.shape[0],))
 	for i in range(x.shape[0]):
 		r[i] = - (10.0 * 2 + np.sum(x[i, :]**2 - 10.0 * np.cos(2.0 * np.pi * x[i, :]), axis=-1))
@@ -79,38 +79,38 @@ def sample(pi, n):
 def fit_quad(x, r):
 	n_states = x.shape[-1]
 
-	q = Quad(n_states)
+	model = Quad(n_states)
 
 	poly = PolynomialFeatures(2)
 	feat = poly.fit_transform(x)
 
-	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(feat.shape[-1])) @ feat.T @ r
+	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(poly.n_output_features_)) @ feat.T @ r
 
 	i_upper = np.triu_indices(n_states, 0)
-	q.M[i_upper] = par[1 + n_states:]
+	model.M[i_upper] = par[1 + n_states:]
 
 	i_lower = np.tril_indices(n_states, -1)
-	q.M[i_lower] = q.M.T[i_lower]
+	model.M[i_lower] = model.M.T[i_lower]
 
-	q.m = par[1: 1 + n_states]
-	q.m0 = par[0]
+	model.m = par[1: 1 + n_states]
+	model.m0 = par[0]
 
 	# check for negative definitness
-	w, v = np.linalg.eig(q.M)
+	w, v = np.linalg.eig(model.M)
 	w[w >= 0.0] = -1e-6
-	q.M = v @ np.diag(w) @ v.T
+	model.M = v @ np.diag(w) @ v.T
 
 	# refit quadratic
-	aux = r - np.einsum('nk,kh,nh->n', x, q.M, x)
+	aux = r - np.einsum('nk,kh,nh->n', x, model.M, x)
 	poly = PolynomialFeatures(1)
 	feat = poly.fit_transform(x)
 
-	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(feat.shape[-1])) @ feat.T @ aux
+	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(poly.n_output_features_)) @ feat.T @ aux
 
-	q.m = par[1:]
-	q.m0 = par[0]
+	model.m = par[1:]
+	model.m0 = par[0]
 
-	return q
+	return model
 
 
 def policy_update(q, model, eta, omega):
@@ -153,6 +153,7 @@ def dual(var, eps, beta, q, model):
 	Q = q.cov
 
 	invQ = np.linalg.inv(Q)
+
 	F = np.linalg.inv(eta * invQ - 2.0 * M)
 	f = eta * invQ @ b + m
 
@@ -176,20 +177,21 @@ def grad(var, eps, beta, q, model):
 	n_states = Q.shape[0]
 
 	invQ = np.linalg.inv(Q)
+
 	F = np.linalg.inv(eta * invQ - 2.0 * M)
 	f = eta * invQ @ b + m
 
 	_, q_lgdt = np.linalg.slogdet(2.0 * np.pi * Q)
 	_, f_lgdt = np.linalg.slogdet(2.0 * np.pi * (eta + omega) * F)
 
-	dF_eta = - F.T @ invQ @ F
-	df_eta = invQ @ b
+	dF_deta = - F.T @ invQ @ F
+	df_deta = invQ @ b
 
-	deta = eps + 0.5 * (2.0 * f.T @ F @ df_eta + f.T @ dF_eta @ f
+	deta = eps + 0.5 * (2.0 * f.T @ F @ df_deta + f.T @ dF_deta @ f
 	                    - b.T @ invQ @ b - q_lgdt
 	                    + f_lgdt + n_states - (eta + omega) * np.trace(F @ invQ))
 
-	domega =  - beta + 0.5 * (f_lgdt + n_states)
+	domega = - beta + 0.5 * (f_lgdt + n_states)
 
 	return np.hstack((deta, domega))
 
@@ -221,7 +223,7 @@ for i in range(iter):
 	var = np.stack((0.5, 0.5))
 	bnds = ((1e-8, 1e8), (1e-8, 1e8))
 
-	res = sc.optimize.minimize(dual, var, method='L-BFGS-B', jac=grad, args=(eps, beta, q, model), bounds=bnds)
+	res = sc.optimize.minimize(dual, np.array([0.5, 0.5]), method='L-BFGS-B', jac=grad, args=(eps, beta, q, model), bounds=bnds)
 	eta = res.x[0]
 	omega = res.x[1]
 
