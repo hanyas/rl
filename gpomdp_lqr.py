@@ -55,6 +55,7 @@ def simulate(theta, sigma, xi, N, L, gamma):
 
 for _ in range(0, C):
 	xi = np.random.uniform(-1.0, 1.0, (N,))
+
 	X, U, R = simulate(thetai, sigmai, xi, N, L, gamma)
 	print('Reward', np.mean(R.sum(axis=1)))
 	R = R[:, :, None]

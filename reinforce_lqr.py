@@ -55,6 +55,7 @@ def simulate(theta, sigma, xi, N, L, gamma):
 
 for _ in range(0, C):
 	xi = np.random.uniform(-1.0, 1.0, (N,))
+
 	X, U, R = simulate(thetai, sigmai, xi, N, L, gamma)
 	r = np.sum(R, axis=1, keepdims=True)
 	print('Reward', np.mean(r, axis=0, keepdims=False))
@@ -67,7 +68,7 @@ for _ in range(0, C):
 	b = np.sum(np.square(dlog) * r, axis=0, keepdims=False) / np.sum(np.square(dlog), axis=0, keepdims=False)
 
 	dj = np.mean(dlog * (r - b), axis=0, keepdims=False)
-	thetai = thetai + 0.005 * dj / L
+	thetai = thetai + 0.01 * dj / L
 
 print(thetai)
 

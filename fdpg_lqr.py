@@ -1,20 +1,24 @@
 import numpy as np
-from numpy import matlib
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import PolynomialFeatures
 
 
-# np.random.seed(99)
+np.random.seed(1337)
 
-thetai = 10.0 * np.random.rand(2,)
+thetai = np.random.randn(2,) + 1.0
 
 N = 100
-L = 10
-C = 250
+L = 100
+C = 100
+
+gamma = 0.999
 
 dt = 0.01
 
-Q = 1e1
-R = 1e-1
+Q = 1e2
+H = 1e-3
 
+poly = PolynomialFeatures(1)
 
 def dynamics(x, u):
 	# x' = x + u
@@ -22,46 +26,54 @@ def dynamics(x, u):
 
 
 def reward(x, u):
-	return - np.square(x - 0.0) * Q - np.square(u) * R
+	return - np.square(x) * Q - np.square(u) * H
 
 
 def actions(theta, x):
-	return np.column_stack([x, np.ones(x.shape)]) @ theta
+	feat = poly.fit_transform(x.reshape(-1, 1))
+	return feat @ theta
 
 
 def simulate(theta, xi, N, L):
 	X = np.zeros((N, L))
 	U = np.zeros((N, L))
+	R = np.zeros((N, L))
 
 	ui = actions(theta, xi)
 
 	X[:, 0] = xi
 	U[:, 0] = ui
+	R[:, 0] = gamma * reward(X[:, 0], U[:, 0])
 
 	for l in range(1, L):
 		X[:, l] = dynamics(X[:, l - 1], U[:, l - 1])
 		U[:, l] = actions(theta, X[:, l])
+		R[:, l] = np.power(gamma, l + 1) * reward(X[:, l], U[:, l])
 
-	R = reward(X, U)
-	r = np.mean(R, axis=1, keepdims=False)
+	return X, U, R
 
-	return r
 
 for _ in range(0, C):
 	xi = np.random.uniform(-1.0, 1.0, (N,))
-	r = simulate(thetai, xi, N, L)
+
+	X, U, R = simulate(thetai, xi, N, L)
+	r = np.mean(R, axis=1, keepdims=False)
 	print('Reward', np.mean(r, axis=0, keepdims=True))
 
-	thetan = thetai + 0.1 * np.random.randn(N, 2)
+	thetan = thetai + 1.0 * np.random.randn(N, 2)
 
-	rn = np.zeros((N,))
-	for i in range(0, N):
-		rn[i] = simulate(thetan[i, :], xi[i], 1, L)
+	Rn = np.zeros((N, L))
+	for i in range(N):
+		_, _, Rn[i, :] = simulate(thetan[i, :], xi[i], 1, L)
+
+	rn = np.mean(Rn, axis=1, keepdims=False)
 
 	dtheta = thetan - thetai
 	dr = rn - r
 	dj = np.linalg.inv(dtheta.T @ dtheta + 1e-8 * np.eye(2)) @ dtheta.T @ dr
 
-	thetai = thetai + 0.1 * dj
+	thetai = thetai + 0.05 * dj / N
 
 print(thetai)
+plt.plot(X[::5, :].T)
+plt.show()
