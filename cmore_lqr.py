@@ -55,7 +55,7 @@ def func(x, c, Q):
 
 
 def sample(pi, Q, n_action, n_cntxt, n_feat, n_samples):
-	c = np.random.uniform(-1.0, 1.0, size=(n_samples, n_cntxt))
+	c = np.random.uniform(-5.0, 5.0, size=(n_samples, n_cntxt))
 
 	poly = PolynomialFeatures(1)
 	feat = poly.fit_transform(c)
@@ -92,12 +92,12 @@ def entropy(q, n_action):
 def fit_quad(x, phi, r, n_action, n_cntxt, n_feat, n_samples):
 	model = Quad(n_action, n_feat)
 
-	n_feat_action = 2 * n_action
+	n_feat_action = n_action * n_action
 	n_feat_cross = n_action * n_feat
 
 	feat = np.zeros((n_samples, n_feat_action + n_feat_cross))
 
-	aux = -0.5 * np.einsum('nk,nh->nkh', x, x)
+	aux = - 0.5 * np.einsum('nk,nh->nkh', x, x)
 	aux = np.reshape(aux, (n_samples, -1), order='C')
 
 	feat[:, :n_feat_action] = aux
@@ -107,15 +107,24 @@ def fit_quad(x, phi, r, n_action, n_cntxt, n_feat, n_samples):
 
 	feat[:, n_feat_action:] = aux
 
-	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(n_feat_action + n_feat_cross)) @ feat.T @ r
+	# par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(n_feat_action + n_feat_cross)) @ feat.T @ r
+
+	clf = Ridge(alpha=0.0001, fit_intercept=False)
+	clf.fit(feat, r)
+	par = clf.coef_
 
 	model.Ra = np.reshape(par[:n_feat_action], (n_action, n_action), order='C')
 	model.Rca = np.reshape(par[n_feat_action:], (n_feat, n_action), order='C')
 
-	# check for negative definitness
+	# symmetrize
+	model.Ra = 0.5 * (model.Ra + model.Ra.T)
+
+	# check for positive definitness
 	w, v = np.linalg.eig(model.Ra)
 	w[w <= 0.0] = 1e-8
 	model.Ra = v @ np.diag(w) @ v.T
+
+	model.Ra = 0.5 * (model.Ra + model.Ra.T)
 
 	# refit quadratic
 	tmp_r = r + 0.5 * np.einsum('nk,kh,nh->n', x, model.Ra, x)
@@ -123,7 +132,12 @@ def fit_quad(x, phi, r, n_action, n_cntxt, n_feat, n_samples):
 	feat = np.einsum('nk,nm->nkm', x, phi)
 	feat = np.reshape(feat, (n_samples, -1), order='C')
 
-	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(n_feat_cross)) @ feat.T @ tmp_r
+	# par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(n_feat_cross)) @ feat.T @ tmp_r
+
+	clf = Ridge(alpha=0.0001, fit_intercept=False)
+	clf.fit(feat, tmp_r)
+	par = clf.coef_
+
 	model.Rca = np.reshape(par, (n_feat, n_action), order='C')
 
 	return model
@@ -140,6 +154,8 @@ def dual(var, eps, beta, q, model, phi):
 	Haa = eta * prec + Ra
 	Hca = eta * q.K.T @ prec + Rca
 	Hcc = eta * q.K.T @ prec @ q.K
+
+	Haa = 0.5 * (Haa + Haa.T)
 
 	invHaa = np.linalg.inv(Haa)
 
@@ -166,6 +182,8 @@ def grad(var, eps, beta, q, model, phi):
 	Hca = eta * q.K.T @ prec + Rca
 	Hcc = eta * q.K.T @ prec @ q.K
 
+	Haa = 0.5 * (Haa + Haa.T)
+
 	invHaa = np.linalg.inv(Haa)
 
 	_, q_lgdt = np.linalg.slogdet(2.0 * np.pi * q.cov)
@@ -186,6 +204,7 @@ def grad(var, eps, beta, q, model, phi):
 
 	return np.hstack([deta, domega])
 
+
 def policy_update(q, model, eta, omega, n_action, n_feat, n_samples):
 	Ra, Rca = model.Ra, model.Rca
 
@@ -195,12 +214,15 @@ def policy_update(q, model, eta, omega, n_action, n_feat, n_samples):
 	Hca = eta * q.K.T @ prec + Rca
 	Hcc = eta * q.K.T @ prec @ q.K
 
+	Haa = 0.5 * (Haa + Haa.T)
+
 	invHaa = np.linalg.inv(Haa)
 
 	pi = Pi(n_action, n_feat)
 
 	pi.K = invHaa @ Hca.T
 	pi.cov = invHaa * (eta + omega) + np.eye(n_action) * 1e-12
+	pi.cov = 0.5 * (pi.cov + pi.cov.T)
 
 	return pi
 
@@ -214,14 +236,16 @@ Q = np.random.randn(n_action, n_action)
 Q = 0.5 * (Q + Q.T)
 Q = Q @ Q.T
 
-n_samples = 500
+n_samples = 100
 
 q = Pi(n_action, n_feat)
 
-eps = 0.1
+eps = 0.05
 gamma = 0.99
 
-iter = 100
+iter = 1000
+
+returns = np.zeros((iter, ))
 
 for i in range(iter):
 	# compute entropy bound
@@ -237,10 +261,10 @@ for i in range(iter):
 	model = fit_quad(x, phi, r, n_action, n_cntxt, n_feat, n_samples)
 
 	# optimize dual
-	var = np.stack((0.5, 0.5))
 	bnds = ((1e-8, 1e8), (1e-8, 1e8))
 
-	res = sc.optimize.minimize(dual, np.array([0.5, 0.5]), method='L-BFGS-B', jac=grad, args=(eps, beta, q, model, phi), bounds=bnds)
+	res = sc.optimize.minimize(dual, np.array([0.1, 0.1]), method='L-BFGS-B', jac=grad,
+								args=(eps, beta, q, model, phi), bounds=bnds)
 	eta = res.x[0]
 	omega = res.x[1]
 
@@ -259,4 +283,9 @@ for i in range(iter):
 
 	q = pi
 
-	print('Iter', i, 'Reward', np.mean(r), 'KL', kl)
+	print('Iter', i, 'Reward', np.mean(r), 'KL', kl, 'Ent', entropy(pi, n_action), 'eta', eta, 'omega', omega)
+	returns[i] = np.mean(r)
+
+
+plt.plot(returns)
+plt.show()
