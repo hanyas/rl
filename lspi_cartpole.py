@@ -46,8 +46,8 @@ M = 8.0
 d_state = 2
 d_action = 1
 
-n_actions = 3
-actions = np.array([-50.0, 0.0, 50.0])
+n_actions = 11
+actions = np.linspace(-50.0, 50.0, n_actions)
 
 n_feat = 75
 
@@ -92,16 +92,16 @@ def dynamics(x, t, u, g, m, M, l):
 	return [x[1], (g * np.sin(x[0]) - 0.5 * a * m * l * x[1]**2 * np.sin(2 * x[0]) - a * np.cos(x[0]) * u) / (4.0 * l / 3.0 - a * m * l * np.cos(x[0])**2)]
 
 
-def reward(x):
+def reward(x, u):
 	if np.fabs(x[0]) < 0.5 * np.pi:
-		r = 0.0
+		r = 0.0 - 2e-4 * np.square(u)
 	else:
-		r = -1.0
+		r = -1.0 - 2e-4 * np.square(u)
 	return r
 
 
 def step(x, u):
-	un = u + np.random.uniform(-5.0, 5.0)
+	un = u + np.random.uniform(-1.0, 1.0)
 	xn = sc.integrate.odeint(dynamics, x, np.array([0.0, dt]), args=(un, g, m, M, l))[1, :]
 	xn[1] = np.remainder(xn[1] + np.pi, 2.0 * np.pi) - np.pi
 	return xn
@@ -121,8 +121,8 @@ def sample(N, T, weights, gamma, epsilon=1.0):
 			ut = policy(x[[-1], :], weights, epsilon)
 			u = np.append(u, ut, axis=0)
 
-			rt = np.power(gamma, t) * reward(x[-1, :])
-			r = np.append(r, [rt], axis=0)
+			rt = np.power(gamma, t) * reward(x[-1, :], u[-1, :])
+			r = np.append(r, rt, axis=0)
 
 			xt = step(x[-1, :], u[-1, :])
 			x = np.append(x, [xt], axis=0)
@@ -133,8 +133,8 @@ def sample(N, T, weights, gamma, epsilon=1.0):
 		ut = policy(x[[-1], :], weights, epsilon)
 		u = np.append(u, ut, axis=0)
 
-		rt = np.power(gamma, t + 1) * reward(x[-1, :])
-		r = np.append(r, [rt], axis=0)
+		rt = np.power(gamma, t + 1) * reward(x[-1, :], u[-1, :])
+		r = np.append(r, rt, axis=0)
 
 		s[n] = t
 
@@ -146,11 +146,11 @@ def sample(N, T, weights, gamma, epsilon=1.0):
 	return x, u, xn, r, s
 
 
-N = 500
+N = 1000
 T = 100
 gamma = 0.95
 
-clf = Ridge(alpha=1e-8, fit_intercept=False)
+clf = Ridge(alpha=1e-12, fit_intercept=False)
 
 x, u, xn, r, s = sample(N, T, weights, gamma, 1.0)
 
