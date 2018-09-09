@@ -106,8 +106,14 @@ class Vfunction:
 			self.n_feat = int(sc.special.comb(self.degree + self.n_states, self.degree))
 			self.basis = PolynomialFeatures(self.degree)
 
+		self.omega = 0.0 * np.random.randn(self.n_feat)
+
 	def features(self, x):
 		return self.basis.fit_transform(x)
+
+	def values(self, x):
+		feat = self.features(x)
+		return np.dot(feat, self.omega)
 
 
 def dual_eta(eta, omega, epsilon, gamma, nvfeatures, vfeatures, ivfeatures, r):
@@ -200,7 +206,6 @@ class REPS:
 		self.ivfeatures = None
 		self.nvfeatures = None
 
-		self.omega = 0.0 * np.random.randn(self.n_vfeat)
 		self.eta = np.array([1.0])
 
 	def sample(self, n_samples, n_keep, reset=True, stoch=True):
@@ -280,8 +285,8 @@ class REPS:
 		return data
 
 	def kl_divergence(self):
-		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.omega) - np.dot(self.vfeatures, self.omega) \
-		      + (1.0 - self.discount) * np.mean(np.dot(self.ivfeatures, self.omega), axis=0, keepdims=True)
+		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.vfunc.omega) - np.dot(self.vfeatures, self.vfunc.omega) \
+		      + (1.0 - self.discount) * np.mean(np.dot(self.ivfeatures, self.vfunc.omega), axis=0, keepdims=True)
 		delta = adv - np.max(adv)
 		w = np.exp(np.clip(1.0 / self.eta * delta, EXP_MIN, EXP_MAX))
 		w = w[w >= 1e-45]
@@ -289,8 +294,8 @@ class REPS:
 		return np.mean(w * np.log(w), axis=0, keepdims=True)
 
 	def ml_policy(self):
-		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.omega) - np.dot(self.vfeatures, self.omega) \
-		      + (1.0 - self.discount) * np.mean(np.dot(self.ivfeatures, self.omega), axis=0, keepdims=True)
+		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.vfunc.omega) - np.dot(self.vfeatures, self.vfunc.omega) \
+		      + (1.0 - self.discount) * np.mean(np.dot(self.ivfeatures, self.vfunc.omega), axis=0, keepdims=True)
 		delta = adv - np.max(adv)
 		w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
 
@@ -323,18 +328,18 @@ for it in range(reps.n_iter):
 
 	for _ in range(250):
 		res = sc.optimize.minimize(dual_eta, reps.eta, method='L-BFGS-B', jac=grad_eta,
-									args=(reps.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r']), bounds=((1e-8, 1e8),))
+									args=(reps.vfunc.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r']), bounds=((1e-8, 1e8),))
 		# print(res)
 
-		# check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, reps.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r'])
+		# check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, reps.vfunc.omega, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r'])
 		# print('Eta Error', check)
 
 		reps.eta = res.x
 
-		res = sc.optimize.minimize(dual_omega, reps.omega, method='BFGS', jac=grad_omega,
+		res = sc.optimize.minimize(dual_omega, reps.vfunc.omega, method='BFGS', jac=grad_omega,
 									args=(reps.eta, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r']))
 
-		# res = sc.optimize.minimize(dual_omega, reps.omega, method='trust-exact', jac=grad_omega, hess=hess_omega,
+		# res = sc.optimize.minimize(dual_omega, reps.vfunc.omega, method='trust-exact', jac=grad_omega, hess=hess_omega,
 		# 							args=(reps.eta, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r']))
 
 		# print(res)
@@ -342,7 +347,7 @@ for it in range(reps.n_iter):
 		# check = sc.optimize.check_grad(dual_omega, grad_omega, res.x, reps.eta, reps.kl_bound, reps.discount, reps.nvfeatures, reps.vfeatures, reps.ivfeatures, reps.data['r'])
 		# print('Omega Error', check)
 
-		reps.omega = res.x
+		reps.vfunc.omega = res.x
 
 	kl_div = reps.kl_divergence()
 

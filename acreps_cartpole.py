@@ -108,8 +108,14 @@ class Vfunction:
 			self.n_feat = int(sc.special.comb(self.degree + self.n_states, self.degree))
 			self.basis = PolynomialFeatures(self.degree)
 
+		self.omega = 0.0 * np.random.randn(self.n_feat)
+
 	def features(self, x):
 		return self.basis.fit_transform(x)
+
+	def values(self, x):
+		feat = self.features(x)
+		return np.dot(feat, self.omega)
 
 
 def dual_eta(eta, omega, epsilon, gamma, nvfeatures, vfeatures, r):
@@ -191,7 +197,6 @@ class ACREPS:
 		self.vfeatures = None
 		self.nvfeatures = None
 
-		self.omega = 0.0 * np.random.randn(self.n_vfeat)
 		self.eta = np.array([1.0])
 
 	def sample(self, n_samples, n_keep, stoch=True):
@@ -268,7 +273,7 @@ class ACREPS:
 		return data
 
 	def kl_divergence(self):
-		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.omega) - np.dot(self.vfeatures, self.omega)
+		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.vfunc.omega) - np.dot(self.vfeatures, self.vfunc.omega)
 		delta = adv - np.max(adv)
 		w = np.exp(np.clip(1.0 / self.eta * delta, EXP_MIN, EXP_MAX))
 		w = w[w >= 1e-45]
@@ -276,7 +281,7 @@ class ACREPS:
 		return np.mean(w * np.log(w), axis=0, keepdims=True)
 
 	def ml_policy(self):
-		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.omega) - np.dot(self.vfeatures, self.omega)
+		adv = self.data['r'] + self.discount * np.dot(self.nvfeatures, self.vfunc.omega) - np.dot(self.vfeatures, self.vfunc.omega)
 		delta = adv - np.max(adv)
 		w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
 
@@ -310,13 +315,13 @@ for it in range(acreps.n_iter):
 	acreps.vfeatures = acreps.vfunc.features(acreps.data['x'])
 	acreps.nvfeatures = acreps.vfunc.features(acreps.data['xn'])
 
-	acreps.omega = learn_vfunction(acreps.vfeatures, acreps.omega, acreps.data, acreps.discount, 0.97)
+	acreps.vfunc.omega = learn_vfunction(acreps.vfeatures, acreps.vfunc.omega, acreps.data, acreps.discount, 0.97)
 
 	res = sc.optimize.minimize(dual_eta, acreps.eta, method='L-BFGS-B', jac=grad_eta,
-								args=(acreps.omega, acreps.kl_bound, acreps.discount, acreps.nvfeatures, acreps.vfeatures, acreps.data['r']), bounds=((1e-8, 1e8),))
+								args=(acreps.vfunc.omega, acreps.kl_bound, acreps.discount, acreps.nvfeatures, acreps.vfeatures, acreps.data['r']), bounds=((1e-8, 1e8),))
 	# print(res)
 
-	# check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, acreps.omega, acreps.kl_bound, acreps.discount, reps.nvfeatures, acreps.vfeatures, acreps.data['r'])
+	# check = sc.optimize.check_grad(dual_eta, grad_eta, res.x, acreps.vfunc.omega, acreps.kl_bound, acreps.discount, reps.nvfeatures, acreps.vfeatures, acreps.data['r'])
 	# print('Eta Error', check)
 
 	acreps.eta = res.x
