@@ -7,9 +7,12 @@ import scipy as sc
 from scipy import optimize
 from scipy import special
 
-from sklearn.preprocessing import PolynomialFeatures
+import time
 
 import gym
+import pybullet_envs
+
+from sklearn.preprocessing import PolynomialFeatures
 
 import matplotlib.pyplot as plt
 import matplotlib._color_data as mcd
@@ -155,13 +158,6 @@ def hess_omega(omega, eta, epsilon, gamma, nvfeatures, vfeatures, ivfeatures, r)
 	return homega
 
 
-def cart_polar(state):
-	ang = np.arctan2(state[:, :, 1], state[:, :, 0])
-	vel = state[:, :, 2]
-	polar = np.stack((ang, vel), axis=2)
-	return polar
-
-
 class REPS:
 
 	def __init__(self, n_states, n_actions,
@@ -184,15 +180,15 @@ class REPS:
 		self.n_vfeat = n_vfeat
 		self.n_pfeat = n_pfeat
 
-		self.env = gym.make('Pendulum-v0')
+		self.env = gym.make("InvertedPendulumSwingupBulletEnv-v0")
 		self.render = False
 
-		self.action_limit = self.env.action_space.high
+		self.action_limit = 3.0
 
-		self.ctl = Policy(self.n_states, self.n_actions, n_feat=self.n_pfeat, band=np.array([0.5, 0.5, 4.0]))
+		self.ctl = Policy(self.n_states, self.n_actions, n_feat=self.n_pfeat, band=np.array([1.25, 1.4, 0.7, 0.7, 1.85]))
 		self.ctl.cov = (2.0 * self.action_limit)**2
 
-		self.vfunc = Vfunction(self.n_states, n_feat=self.n_vfeat, band=np.array([0.5, 0.5, 4.0]))
+		self.vfunc = Vfunction(self.n_states, n_feat=self.n_vfeat, band=np.array([1.25, 1.4, 0.7, 0.7, 1.85]))
 
 		self.data = {'xi': np.empty((0, n_states)),
 		             'ui': np.empty((0, n_actions)),
@@ -240,6 +236,7 @@ class REPS:
 
 					x_aux, r_aux, done, _ = self.env.step(np.clip(u_aux, - self.action_limit, self.action_limit))
 					if self.render:
+						time.sleep(1. / 50.)
 						self.env.render()
 
 					data['xn'] = np.vstack((data['xn'], x_aux))
@@ -273,6 +270,7 @@ class REPS:
 
 				x_aux, r_aux, done, _ = self.env.step(np.clip(u_aux, - self.action_limit, self.action_limit))
 				if self.render:
+					time.sleep(1. / 50.)
 					self.env.render()
 
 				data['xn'] = np.vstack((data['xn'], x_aux))
@@ -316,10 +314,10 @@ class REPS:
 		self.ctl.cov = np.einsum('t,tk,th->kh', w, tmp, tmp) / (Z + 1e-24)
 
 
-reps = REPS(n_states=3, n_actions=1,
-			n_samples=3000, n_iter=10, n_keep=600,
+reps = REPS(n_states=5, n_actions=1,
+			n_samples=5000, n_iter=10, n_keep=500,
 			kl_bound=0.1, discount=0.99,
-			n_vfeat=75, n_pfeat=75,
+			n_vfeat=250, n_pfeat=250,
 			n_rollouts=10, n_steps=1000)
 
 for it in range(reps.n_iter):
@@ -361,28 +359,10 @@ for it in range(reps.n_iter):
 	print('Iteration:', it, 'Reward:', np.sum(eval['r']) / reps.n_rollouts, 'KL:', kl_div, 'Cov:', *reps.ctl.cov)
 
 
+reps.env = None
+reps.env = gym.make("InvertedPendulumSwingupBulletEnv-v0")
+reps.env.render(mode="human")
+
 reps.render = True
 eval = reps.evaluate(reps.n_rollouts, reps.n_steps)
 reps.env.close()
-
-State = eval['xn'].reshape((-1, reps.n_steps, reps.n_states))
-Angle = cart_polar(State)
-Reward = eval['r'].reshape((-1, reps.n_steps,))
-Action = np.clip(eval['u'].reshape((-1, reps.n_steps, reps.n_actions)), -reps.action_limit, reps.action_limit)
-
-plt.figure()
-sfig0 = plt.subplot(221)
-plt.title('Cos, Sin')
-sfig1 = plt.subplot(222)
-plt.title('Angle')
-sfig2 = plt.subplot(223)
-plt.title('Reward')
-sfig3 = plt.subplot(224)
-plt.title('Action')
-
-for rollout in range(reps.n_rollouts):
-	sfig0.plot(State[rollout, :, :-1])
-	sfig1.plot(Angle[rollout, :, 0])
-	sfig2.plot(Reward[rollout, :])
-	sfig3.plot(Action[rollout, :])
-plt.show()
