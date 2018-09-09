@@ -7,11 +7,13 @@ import lab
 
 import matplotlib.pyplot as plt
 
+
 # 0: creating a feedforward neural network in tensorflow
 class MLP:
     # sizes: [input length, hidden layer 1 length, ...,  hidden layer N length, output length]
     def __init__(self, sizes):
-        self.x = last_out = tf.placeholder(dtype=tf.float32, shape=[None, sizes[0]])
+        self.x = last_out = tf.placeholder(dtype=tf.float32,
+                                           shape=[None, sizes[0]])
         activations = [tf.tanh] * (len(sizes) - 2) + [tf.identity]
         # creating the feedforward neural net
         for size, activation in zip(sizes[1:], activations):
@@ -21,7 +23,8 @@ class MLP:
             # here last_out is used to store the last tensor
             # 0: --->
 
-            last_out = tf.layers.dense(inputs=last_out, units=size, activation=activation)
+            last_out = tf.layers.dense(inputs=last_out, units=size,
+                                       activation=activation)
         self.out = last_out
 
 
@@ -44,22 +47,29 @@ class MLPGaussianPolicy:
         # which you can access with mlp.out
         # 0: --->
 
-        self.gauss_pol = tf.distributions.Normal(self.mlp.out, tf.exp(self.logsigs))
+        self.gauss_pol = tf.distributions.Normal(self.mlp.out,
+                                                 tf.exp(self.logsigs))
         self.act_tensor = self.gauss_pol.sample()
-        
+
         # action proba (diagonal Gaussian)
         # tensor for the log density of the policy (needed for PPO's update)
-        self.test_action = tf.placeholder(dtype=tf.float32, shape=[None, act_dim])
-        self.log_prob = tf.reduce_sum(self.gauss_pol.log_prob(self.test_action), axis=1, keep_dims=True)
+        self.test_action = tf.placeholder(dtype=tf.float32,
+                                          shape=[None, act_dim])
+        self.log_prob = tf.reduce_sum(
+            self.gauss_pol.log_prob(self.test_action), axis=1, keep_dims=True)
 
         # pol entropy (for logging only)
-        self.entropy = tf.reduce_sum(self.logsigs + np.log(2 * np.pi * np.e) / 2)
+        self.entropy = tf.reduce_sum(
+            self.logsigs + np.log(2 * np.pi * np.e) / 2)
 
     def get_action(self, obs):
-        return np.squeeze(self.sess.run(self.act_tensor, {self.mlp.x: np.asmatrix(obs)}), axis=0)
+        return np.squeeze(
+            self.sess.run(self.act_tensor, {self.mlp.x: np.asmatrix(obs)}),
+            axis=0)
 
     def get_log_proba(self, obs, act):
-        return self.sess.run(self.log_prob, {self.mlp.x: obs, self.test_action: act})
+        return self.sess.run(self.log_prob,
+                             {self.mlp.x: obs, self.test_action: act})
 
 
 # 1: learning the v function (policy evaluation)
@@ -67,7 +77,7 @@ class MLPVFunc:
     def __init__(self, session, mlp, lrate=1e-3):
         self.mlp = mlp
         self.sess = session
-        
+
         # loss for v function
         self.target_v = tf.placeholder(dtype=tf.float32, shape=[None, 1])
         # frame a regression problem minimizing squared error between
@@ -75,18 +85,21 @@ class MLPVFunc:
         # use function tf.losses.mean_squared_error(labels, predictions)
         # 1: --->
 
-        self.loss_v = tf.losses.mean_squared_error(labels=self.target_v, predictions=self.mlp.out)
+        self.loss_v = tf.losses.mean_squared_error(labels=self.target_v,
+                                                   predictions=self.mlp.out)
 
         # call tf.train.AdamOptimizer(learning rate).minimize(a tensor "tens") to create a tensor that
         # computes the gradient of "tens" and does one Adam update of the Variables parameterizing "tens"
         # 1: --->
 
         self.optimizer_v = tf.train.AdamOptimizer(lrate).minimize(self.loss_v)
-    
-    def get_loss_v(self, obs, target_v):
-        return self.sess.run(self.loss_v, {self.mlp.x: obs, self.target_v: target_v})
 
-    def evaluate_pol(self, paths, discount=.99, lam_trace=.95, nb_epochs=50, batch_size=64):
+    def get_loss_v(self, obs, target_v):
+        return self.sess.run(self.loss_v,
+                             {self.mlp.x: obs, self.target_v: target_v})
+
+    def evaluate_pol(self, paths, discount=.99, lam_trace=.95, nb_epochs=50,
+                     batch_size=64):
         # estimate the v-function
         for epoch in range(nb_epochs):
             # compute the generalized td_error and v_targets
@@ -94,16 +107,20 @@ class MLPVFunc:
             gen_adv = np.empty_like(v_values)
             for rev_k, v in enumerate(reversed(v_values)):
                 k = len(v_values) - rev_k - 1
-                if paths["done"][k]:  # this is a new path. always true for rev_k == 0
+                if paths["done"][
+                    k]:  # this is a new path. always true for rev_k == 0
                     gen_adv[k] = paths["rwd"][k] - v_values[k]
                 else:
                     # gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - v_values[k]  # TD(0)
-                    gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - v_values[k] + discount * lam_trace * gen_adv[k + 1]  # TD(lambda)
+                    gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - \
+                                 v_values[k] + discount * lam_trace * gen_adv[
+                                     k + 1]  # TD(lambda)
             v_targets = v_values + gen_adv  # generalized Bellmann operator
 
             # log Bellman error if first epoch
             if epoch == 0:
-                print('v-function: loss before training is ', self.get_loss_v(paths["obs"], v_targets))
+                print('v-function: loss before training is ',
+                      self.get_loss_v(paths["obs"], v_targets))
             for batch_idx in next_batch_idx(batch_size, len(v_targets)):
                 # perform one gradient step with a mini-batch, to minimize mse between mlp output and v_targets
                 # Reminder: we already created a tensor (i.e. a function) to perform this  (self.optimizer_v)
@@ -112,9 +129,12 @@ class MLPVFunc:
                 # session.run(tensor to evaluate, {placeholder1: data, placeholder2: data, ...})
                 # 1: --->
 
-                self.sess.run(self.optimizer_v, {self.mlp.x: paths["obs"][batch_idx], self.target_v: v_targets[batch_idx]})
+                self.sess.run(self.optimizer_v,
+                              {self.mlp.x: paths["obs"][batch_idx],
+                               self.target_v: v_targets[batch_idx]})
 
-        print('v-function: loss after training is ', self.get_loss_v(paths["obs"], v_targets))
+        print('v-function: loss after training is ',
+              self.get_loss_v(paths["obs"], v_targets))
         return gen_adv
 
 
@@ -143,21 +163,29 @@ class PPO:
 
         proba_ratio = tf.exp(self.pol.log_prob - self.old_log_probas)
         self.clip_pr = tf.clip_by_value(proba_ratio, 1 - e_clip, 1 + e_clip)
-        self.neg_objective_act = -tf.reduce_mean(tf.minimum(tf.multiply(proba_ratio, self.advantage), tf.multiply(self.clip_pr, self.advantage)))
+        self.neg_objective_act = -tf.reduce_mean(
+            tf.minimum(tf.multiply(proba_ratio, self.advantage),
+                       tf.multiply(self.clip_pr, self.advantage)))
 
         # call tf.train.AdamOptimizer(learning rate).minimize(a tensor "tens") to create a tensor that
         # computes the gradient of "tens" and does one Adam update of the Variables parameterizing "tens"
         # 2: --->
 
-        self.optimizer_act = tf.train.AdamOptimizer(lrate).minimize(self.neg_objective_act)
+        self.optimizer_act = tf.train.AdamOptimizer(lrate).minimize(
+            self.neg_objective_act)
 
     def evaluate_pol(self, obs, old_act, old_log_probas, advantages):
-        return -self.sess.run(self.neg_objective_act, {self.pol.mlp.x: obs, self.pol.test_action: old_act,
-                                                       self.advantage: advantages, self.old_log_probas: old_log_probas})
+        return -self.sess.run(self.neg_objective_act, {self.pol.mlp.x: obs,
+                                                       self.pol.test_action: old_act,
+                                                       self.advantage: advantages,
+                                                       self.old_log_probas: old_log_probas})
 
-    def update_pol(self, paths, adv, old_log_prob, nb_epochs=10, batch_size=64):
+    def update_pol(self, paths, adv, old_log_prob, nb_epochs=10,
+                   batch_size=64):
         print('entropy: before update', self.sess.run(self.pol.entropy))
-        print('policy: objective before training ', self.evaluate_pol(paths["obs"], paths["act"], old_log_probas=old_log_prob, advantages=adv))
+        print('policy: objective before training ',
+              self.evaluate_pol(paths["obs"], paths["act"],
+                                old_log_probas=old_log_prob, advantages=adv))
         for epoch in range(nb_epochs):
             for batch_idx in next_batch_idx(batch_size, len(adv)):
                 # perform one gradient step with a mini-batch, to minimize PPO's loss
@@ -167,17 +195,24 @@ class PPO:
                 # session.run(tensor to evaluate, {placeholder1: data, placeholder2: data, ...})
                 # 2: --->
 
-                self.sess.run(self.optimizer_act, {self.pol.mlp.x: paths["obs"][batch_idx], self.pol.test_action: paths["act"][batch_idx],
-                                                     self.advantage: adv[batch_idx], self.old_log_probas: old_log_prob[batch_idx]})
+                self.sess.run(self.optimizer_act,
+                              {self.pol.mlp.x: paths["obs"][batch_idx],
+                               self.pol.test_action: paths["act"][batch_idx],
+                               self.advantage: adv[batch_idx],
+                               self.old_log_probas: old_log_prob[batch_idx]})
 
         print('entropy: after update ', self.sess.run(self.pol.entropy))
-        print('policy: objective after training ', self.evaluate_pol(paths["obs"], paths["act"], old_log_probas=old_log_prob, advantages=adv))
+        print('policy: objective after training ',
+              self.evaluate_pol(paths["obs"], paths["act"],
+                                old_log_probas=old_log_prob, advantages=adv))
 
 
 def next_batch_idx(batch_size, data_set_size):
-    batch_idx_list = np.random.choice(data_set_size, data_set_size, replace=False)
+    batch_idx_list = np.random.choice(data_set_size, data_set_size,
+                                      replace=False)
     for batch_start in range(0, data_set_size, batch_size):
-        yield batch_idx_list[batch_start:min(batch_start + batch_size, data_set_size)]
+        yield batch_idx_list[
+              batch_start:min(batch_start + batch_size, data_set_size)]
 
 
 def rollout(env, policy, render=False):
@@ -236,8 +271,9 @@ for it in range(nb_iter):
     print('-------- iter', it, '--------')
 
     # Generates transition data by interacting with the env
-    paths = rollouts(env, policy=policy.get_action, min_trans=min_trans_per_iter, render=True)  # 0
-    print('avg_rwd', np.sum(paths["rwd"]) / paths["nb_paths"]) # average (undiscounted) reward  # 0
+    paths = rollouts(env, policy=policy.get_action,
+                     min_trans=min_trans_per_iter, render=True)  # 0
+    print('avg_rwd', np.sum(paths["rwd"]) / paths["nb_paths"])  # average (undiscounted) reward  # 0
 
     # policy eval
     adv = vlearner.evaluate_pol(paths)  # 1
