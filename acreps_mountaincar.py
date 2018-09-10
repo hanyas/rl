@@ -317,7 +317,7 @@ for it in range(acreps.n_iter):
     acreps.nvfeatures = acreps.vfunc.features(acreps.data['xn'])
 
     acreps.vfunc.omega = learn_vfunction(acreps.vfeatures, acreps.vfunc.omega,
-                                         acreps.data, acreps.discount, 0.98)
+                                         acreps.data, acreps.discount, 0.95)
 
     res = sc.optimize.minimize(dual_eta, acreps.eta, method='L-BFGS-B',
                                jac=grad_eta,
