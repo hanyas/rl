@@ -40,7 +40,7 @@ np.random.seed(1337)
 
 class Pi:
 	def __init__(self, n_states):
-		self.theta = np.random.randn(n_states)
+		self.theta = 0.0 * np.random.randn(n_states)
 		self.cov = 10.0 * np.eye(n_states)
 
 
@@ -100,15 +100,15 @@ def fit_quad(x, r):
 	w[w >= 0.0] = -1e-6
 	model.M = v @ np.diag(w) @ v.T
 
-	# refit quadratic
-	aux = r - np.einsum('nk,kh,nh->n', x, model.M, x)
-	poly = PolynomialFeatures(1)
-	feat = poly.fit_transform(x)
-
-	par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(poly.n_output_features_)) @ feat.T @ aux
-
-	model.m = par[1:]
-	model.m0 = par[0]
+	# # refit quadratic
+	# aux = r - np.einsum('nk,kh,nh->n', x, model.M, x)
+	# poly = PolynomialFeatures(1)
+	# feat = poly.fit_transform(x)
+	#
+	# par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(poly.n_output_features_)) @ feat.T @ aux
+	#
+	# model.m = par[1:]
+	# model.m0 = par[0]
 
 	return model
 
@@ -120,6 +120,7 @@ def policy_update(q, model, eta, omega):
 	Q = q.cov
 
 	invQ = np.linalg.inv(Q)
+
 	F = np.linalg.inv(eta * invQ - 2.0 * M)
 	f = eta * invQ @ b + m
 
@@ -165,6 +166,7 @@ def dual(var, eps, beta, q, model):
 	                                      + (eta + omega) * f_lgdt)
 	return g
 
+
 def grad(var, eps, beta, q, model):
 	eta = var[0]
 	omega = var[1]
@@ -201,10 +203,10 @@ n_samples = 100
 
 q = Pi(n_states)
 
-eta = 1000.0
+eta = 1.0
 omega = 1000.0
 
-eps = 0.1
+eps = 0.05
 gamma = 0.99
 
 iter = 1500
@@ -223,7 +225,7 @@ for i in range(iter):
 	var = np.stack((0.5, 0.5))
 	bnds = ((1e-8, 1e8), (1e-8, 1e8))
 
-	res = sc.optimize.minimize(dual, np.array([0.5, 0.5]), method='L-BFGS-B', jac=grad, args=(eps, beta, q, model), bounds=bnds)
+	res = sc.optimize.minimize(dual, np.array([100, 100]), method='L-BFGS-B', jac=grad, args=(eps, beta, q, model), bounds=bnds)
 	eta = res.x[0]
 	omega = res.x[1]
 

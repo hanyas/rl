@@ -98,7 +98,7 @@ class MLPVFunc:
         return self.sess.run(self.loss_v,
                              {self.mlp.x: obs, self.target_v: target_v})
 
-    def evaluate_pol(self, paths, discount=.999, lam_trace=.95, nb_epochs=50,
+    def evaluate_pol(self, paths, discount=.9995, lam_trace=.99, nb_epochs=50,
                      batch_size=64):
         # estimate the v-function
         for epoch in range(nb_epochs):
@@ -111,9 +111,8 @@ class MLPVFunc:
                     k]:  # this is a new path. always true for rev_k == 0
                     gen_adv[k] = paths["rwd"][k] - v_values[k]
                 else:
-                    gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - \
-                                 v_values[k]  # TD(0)
-                    # gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - v_values[k] + discount * lam_trace * gen_adv[k + 1]  # TD(lambda)
+                    # gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - v_values[k]  # TD(0)
+                    gen_adv[k] = paths["rwd"][k] + discount * v_values[k + 1] - v_values[k] + discount * lam_trace * gen_adv[k + 1]  # TD(lambda)
             v_targets = v_values + gen_adv  # generalized Bellmann operator
 
             # log Bellman error if first epoch

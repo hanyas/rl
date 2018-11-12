@@ -56,7 +56,7 @@ class MLPGaussianPolicy:
         self.test_action = tf.placeholder(dtype=tf.float32,
                                           shape=[None, act_dim])
         self.log_prob = tf.reduce_sum(
-            self.gauss_pol.log_prob(self.test_action), axis=1, keep_dims=True)
+            self.gauss_pol.log_prob(self.test_action), axis=1, keepdims=True)
 
         # pol entropy (for logging only)
         self.entropy = tf.reduce_sum(
@@ -244,18 +244,18 @@ def rollouts(env, policy, min_trans, render=False):
     return paths
 
 
-env = gym.make('FurutaPendulum-v0')
+env = gym.make('Furuta-v0')
 
 # params
 nb_iter = 50  # one iter -> at least min_trans_per_iter generated
-min_trans_per_iter = 7500
-exploration_sigma = 25.0
+min_trans_per_iter = 5000
+exploration_sigma = 5.0
 e_clip = .1  # the 'step size'
 
 # mlp for v-function and policy
-s_dim, a_dim = 4, 1
+s_dim, a_dim = 6, 1
 
-layer_sizes = [s_dim] + [64] * 2
+layer_sizes = [s_dim] + [16] * 2
 pmlp = MLP(layer_sizes + [a_dim])  # 0
 vmlp = MLP(layer_sizes + [1])  # 1
 
@@ -272,7 +272,7 @@ for it in range(nb_iter):
 
     # Generates transition data by interacting with the env
     paths = rollouts(env, policy=policy.get_action,
-                     min_trans=min_trans_per_iter, render=True)  # 0
+                     min_trans=min_trans_per_iter, render=False)  # 0
     print('avg_rwd', np.sum(paths["rwd"]) / paths["nb_paths"])  # average (undiscounted) reward  # 0
 
     # policy eval

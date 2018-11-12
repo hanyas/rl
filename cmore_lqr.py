@@ -121,24 +121,26 @@ def fit_quad(x, phi, r, n_action, n_cntxt, n_feat, n_samples):
 
 	# check for positive definitness
 	w, v = np.linalg.eig(model.Ra)
-	w[w <= 0.0] = 1e-8
-	model.Ra = v @ np.diag(w) @ v.T
 
-	model.Ra = 0.5 * (model.Ra + model.Ra.T)
+	if np.any(w <= 0.0):
+		w[w <= 0.0] = 1e-6
+		model.Ra = v @ np.diag(w) @ v.T
 
-	# refit quadratic
-	tmp_r = r + 0.5 * np.einsum('nk,kh,nh->n', x, model.Ra, x)
+		model.Ra = 0.5 * (model.Ra + model.Ra.T)
 
-	feat = np.einsum('nk,nm->nkm', x, phi)
-	feat = np.reshape(feat, (n_samples, -1), order='C')
+		# refit quadratic
+		tmp_r = r + 0.5 * np.einsum('nk,kh,nh->n', x, model.Ra, x)
 
-	# par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(n_feat_cross)) @ feat.T @ tmp_r
+		feat = np.einsum('nk,nm->nkm', x, phi)
+		feat = np.reshape(feat, (n_samples, -1), order='C')
 
-	clf = Ridge(alpha=0.0001, fit_intercept=False)
-	clf.fit(feat, tmp_r)
-	par = clf.coef_
+		# par = np.linalg.inv(feat.T @ feat + 1e-8 * np.eye(n_feat_cross)) @ feat.T @ tmp_r
 
-	model.Rca = np.reshape(par, (n_feat, n_action), order='C')
+		clf = Ridge(alpha=0.0001, fit_intercept=False)
+		clf.fit(feat, tmp_r)
+		par = clf.coef_
+
+		model.Rca = np.reshape(par, (n_feat, n_action), order='C')
 
 	return model
 
@@ -155,7 +157,7 @@ def dual(var, eps, beta, q, model, phi):
 	Hca = eta * q.K.T @ prec + Rca
 	Hcc = eta * q.K.T @ prec @ q.K
 
-	Haa = 0.5 * (Haa + Haa.T)
+	# Haa = 0.5 * (Haa + Haa.T)
 
 	invHaa = np.linalg.inv(Haa)
 
@@ -182,7 +184,7 @@ def grad(var, eps, beta, q, model, phi):
 	Hca = eta * q.K.T @ prec + Rca
 	Hcc = eta * q.K.T @ prec @ q.K
 
-	Haa = 0.5 * (Haa + Haa.T)
+	# Haa = 0.5 * (Haa + Haa.T)
 
 	invHaa = np.linalg.inv(Haa)
 
@@ -214,15 +216,16 @@ def policy_update(q, model, eta, omega, n_action, n_feat, n_samples):
 	Hca = eta * q.K.T @ prec + Rca
 	Hcc = eta * q.K.T @ prec @ q.K
 
-	Haa = 0.5 * (Haa + Haa.T)
+	# Haa = 0.5 * (Haa + Haa.T)
 
 	invHaa = np.linalg.inv(Haa)
 
 	pi = Pi(n_action, n_feat)
 
 	pi.K = invHaa @ Hca.T
-	pi.cov = invHaa * (eta + omega) + np.eye(n_action) * 1e-12
-	pi.cov = 0.5 * (pi.cov + pi.cov.T)
+	pi.cov = invHaa * (eta + omega) + np.eye(n_action) * 1e-16
+
+	# pi.cov = 0.5 * (pi.cov + pi.cov.T)
 
 	return pi
 
@@ -243,7 +246,7 @@ q = Pi(n_action, n_feat)
 eps = 0.05
 gamma = 0.99
 
-iter = 1000
+iter = 100
 
 returns = np.zeros((iter, ))
 
@@ -263,7 +266,7 @@ for i in range(iter):
 	# optimize dual
 	bnds = ((1e-8, 1e8), (1e-8, 1e8))
 
-	res = sc.optimize.minimize(dual, np.array([0.1, 0.1]), method='L-BFGS-B', jac=grad,
+	res = sc.optimize.minimize(dual, np.array([0.1, 0.1]), method='SLSQP', jac=grad,
 								args=(eps, beta, q, model, phi), bounds=bnds)
 	eta = res.x[0]
 	omega = res.x[1]

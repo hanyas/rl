@@ -34,7 +34,7 @@ colors = []
 for k in color_names:
 	colors.append(mcd.XKCD_COLORS['xkcd:'+k].upper())
 
-# np.random.seed(99)
+# np.random.seed(1337)
 
 dt = 0.1
 

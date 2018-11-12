@@ -2,56 +2,35 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# np.random.seed(99)
+np.random.seed(1337)
 
 # state transitions [A, B]
-M = np.array([[1.1, 0.1], [1.01, 0.01]])
+M = np.array([1.01, 0.01])
 
 # reward matrices
-Q = np.array([1e1, 2e1])
-R = np.array([2e0, 1e0])
+Q = np.array([1e1, ])
+R = np.array([1e-3, ])
 
 xmax = 1.0
 umax = 1.0
 
-Nz = 2
 Nx = int(2 * xmax * 100)
 Nu = int(2 * umax * 100)
 
-gamma = 0.96
+gamma = 0.98
 iter = 5000
 
 
-def next_state(z, x, u, M, X, xmax):
-	zn = np.zeros(z.shape, np.int64)
-
-	i = np.where(z == 0)[0]
-	j = np.where(x > 0.0)[0]
-	zn[np.intersect1d(i, j)] = 1
-	zn[np.setdiff1d(i, j)] = 0
-
-	i = np.where(z == 1)[0]
-	j = np.where(x <= 0.0)[0]
-	zn[np.intersect1d(i, j)] = 0
-	zn[np.setdiff1d(i, j)] = 1
-
-	xn = M[zn, 0] * x + M[zn, 1] * u
+def next_state(x, u, M, X, xmax):
+	xn = M[0] * x + M[1] * u
 	xn = np.clip(xn, - xmax, xmax)
-
-	idx = np.digitize(xn[:, 0], X[:, 0], right=True)
+	idx = np.digitize(xn, X, right=True)
 	xn = X[idx]
+	return xn
 
-	return zn, xn
 
-
-def reward(z, x, u, Q, R):
-	r = np.zeros(x.shape)
-
-	i = np.where(z == 0)[0]
-	r[i] = - np.square(x[i] - 0.0) * Q[0] - np.square(u[i]) * R[0]
-	i = np.where(z == 1)[0]
-	r[i] = - np.square(x[i] - 0.0) * Q[1] - np.square(u[i]) * R[1]
-
+def reward(x, u, Q, R):
+	r = - np.square(x - 0.0) * Q - np.square(u) * R
 	return r
 
 
@@ -60,8 +39,8 @@ def maximize_action(Q, V, R, Vmask, Qmask, gamma):
 
 	Q = R + gamma * Q
 
-	V = np.amin(Q, axis=2)
-	ctl = np.argmin(Q, axis=2)
+	V = np.amin(Q, axis=1)
+	ctl = np.argmin(Q, axis=1)
 
 	return Q, V, ctl
 
@@ -76,42 +55,35 @@ def value_iteration(Q, V, R, Vmask, Qmask, gamma, iter):
 
 
 # state action bins
-X = np.linspace(-xmax, xmax, Nx)[:, None]
-U = np.linspace(-umax, umax, Nu)[:, None]
-Z = np.array([[0], [1]], np.int64)
+X = np.linspace(-xmax, xmax, Nx)
+U = np.linspace(-umax, umax, Nu)
 
 # state action grid
-zg, xg, ug = np.meshgrid(Z, X, U, indexing="ij")
+xg, ug = np.meshgrid(X, U, indexing="ij")
 
 # reshape grid
-zr = np.reshape(zg, (Nz * Nx * Nu, 1), order='C')
-xr = np.reshape(xg, (Nz * Nx * Nu, 1), order='C')
-ur = np.reshape(ug, (Nz * Nx * Nu, 1), order='C')
+xr = np.reshape(xg, (Nx * Nu, 1), order='C')
+ur = np.reshape(ug, (Nx * Nu, 1), order='C')
 
 # reward of all grid points
-R = reward(zr, xr, ur, Q, R)
-R = np.reshape(R, (Nz, Nx, Nu), order='C')
+R = reward(xr, ur, Q, R)
+R = np.reshape(R, (Nx, Nu), order='C')
 
 # next state of all grid points
-zn, xn = next_state(zr, xr, ur, M, X, xmax)
+xn = next_state(xr, ur, M, X, xmax)
 
 # index of state-aciton pairs
-zi = np.digitize(zr[:, 0], Z[:, 0], right=True)
-xi = np.digitize(xr[:, 0], X[:, 0], right=True)
-ui = np.digitize(ur[:, 0], U[:, 0], right=True)
+xi = np.digitize(xr, X, right=True)
+ui = np.digitize(ur, U, right=True)
+xni = np.digitize(xn, X, right=True)
 
-zni = np.digitize(zn[:, 0], Z[:, 0], right=True)
-xni = np.digitize(xn[:, 0], X[:, 0], right=True)
+Vmask = xni
+Qmask = [xi, ui]
 
-Vmask = [zni, xni]
-Qmask = [zi, xi, ui]
-
-Q = np.zeros((Nz, Nx, Nu))
-V = np.zeros((Nz, Nx))
+V = np.zeros((Nx, ))
+Q = np.zeros((Nx, Nu))
 
 Q, V, ctl = value_iteration(Q, V, R, Vmask, Qmask, gamma, iter)
 
-plt.contourf(xg[0, :, :], ug[0, :, :], Q[0, :, :], alpha=0.5, cmap="plasma")
-plt.show()
-plt.contourf(xg[1, :, :], ug[1, :, :], Q[1, :, :], alpha=0.5, cmap="plasma")
+plt.imshow(Q, extent=[-xmax, xmax, -umax, umax])
 plt.show()
