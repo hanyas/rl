@@ -1,0 +1,26 @@
+# default document denoted by the name "DEFAULT"
+name: "DEFAULT"
+repetitions: 1
+iterations: 1
+# this is the path where the results are stored,
+# it can be different from the location of the experiment scripts
+path: "../data/"
+
+params:
+  n_samples: 5000
+  n_iter: 25
+  n_rollouts: 25
+  n_steps: 200
+  n_keep: 1000
+  kl_bound: 0.05
+  discount: 0.98
+  vreg: 1.e-16
+  preg: 1.e-12
+  cov0: 8.0
+  n_vfeat: 75
+  n_pfeat: 75
+  band: [0.5, 0.5, 3.0]
+
+---
+# 1. experiment
+name: "reps_pendulum"
