@@ -10,7 +10,7 @@ class MyExperiment(ClusterWork):
         'n_iter': 10,
         'n_rollouts': 25,
         'n_steps': 200,
-        'n_keep': 1000,
+        'n_keep': 0,
         'kl_bound': 0.1,
         'discount': 0.99,
         'vreg': 1e-16,
@@ -34,9 +34,10 @@ class MyExperiment(ClusterWork):
         cov0 = self._params['cov0']
         n_vfeat = self._params['n_vfeat']
         n_pfeat = self._params['n_pfeat']
-        band = 2.0 * np.array(self._params['band'])
+        band = np.array(self._params['band'])
 
         import gym
+        import lab
 
         np.random.seed(self._seed)
         env = gym.make('Pendulum-v1')

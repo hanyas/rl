@@ -10,7 +10,7 @@ class MyExperiment(ClusterWork):
         'n_iter': 10,
         'n_rollouts': 25,
         'n_steps': 500,
-        'n_keep': 1000,
+        'n_keep': 0,
         'kl_bound': 0.1,
         'discount': 0.98,
         'vreg': 1e-16,
@@ -37,10 +37,11 @@ class MyExperiment(ClusterWork):
         band = np.array(self._params['band'])
 
         import gym
+        import lab
 
         np.random.seed(self._seed)
         env = gym.make('Furuta-v0')
-        env._max_episode_steps = 500
+        env._max_episode_steps = 5000
         env.seed(self._seed)
 
         self.reps = REPS(env=env,

@@ -10,7 +10,7 @@ class MyExperiment(ClusterWork):
         'n_iter': 10,
         'n_rollouts': 25,
         'n_steps': 500,
-        'n_keep': 1000,
+        'n_keep': 0,
         'kl_bound': 0.1,
         'discount': 0.99,
         'trace': 0.95,
@@ -37,10 +37,11 @@ class MyExperiment(ClusterWork):
         cov0 = self._params['cov0']
         n_vfeat = self._params['n_vfeat']
         n_pfeat = self._params['n_pfeat']
-        s_band = 1.0 * np.array(self._params['s_band'])
+        s_band = np.array(self._params['s_band'])
         sa_band = np.array(self._params['sa_band'])
 
         import gym
+        import lab
 
         np.random.seed(self._seed)
         env = gym.make('Cartpole-v0')

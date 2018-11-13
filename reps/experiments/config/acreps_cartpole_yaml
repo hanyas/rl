@@ -11,7 +11,7 @@ params:
   n_iter: 25
   n_rollouts: 25
   n_steps: 500
-  n_keep: 1000
+  n_keep: 0
   kl_bound: 0.1
   discount: 0.99
   trace: 0.95
