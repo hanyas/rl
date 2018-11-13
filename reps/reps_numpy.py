@@ -228,7 +228,10 @@ class REPS:
 
             rollouts.append(roll)
 
-        return rollouts, merge_dicts(*rollouts)
+        data = merge_dicts(*rollouts)
+        data['u'] = np.reshape(data['u'], (-1, self.n_actions))
+
+        return rollouts, data
 
     def dual(self, var, epsilon, phi, r):
         eta, omega = var[0], var[1:]

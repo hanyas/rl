@@ -251,7 +251,10 @@ class ACREPS:
 
             rollouts.append(roll)
 
-        return rollouts, merge_dicts(*rollouts)
+        data = merge_dicts(*rollouts)
+        data['u'] = np.reshape(data['u'], (-1, self.n_actions))
+
+        return rollouts, data
 
     def lstd(self, phin, phi, discount, data):
         A = phi.T @ (phi - discount * phin)
