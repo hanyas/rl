@@ -40,7 +40,7 @@ class Policy:
         self.cov = sc.stats.invwishart.rvs(prior["nu"],
                                            prior["psi"] * np.eye(n_actions))
 
-        self.K = 0.0 * np.random.randn(self.n_actions, self.n_feat)
+        self.K = np.random.randn(self.n_actions, self.n_feat)
 
         self.perc = 1.0 / self.cov
         self.const = 1.0 / np.sqrt(np.linalg.det(
@@ -115,7 +115,7 @@ class MultiLogistic:
                 sc.special.comb(self.degree + self.n_states, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
-        self.par = 0.0 * np.random.randn(self.n_regions,
+        self.par = np.random.randn(self.n_regions,
                                    self.n_regions * self.n_feat)
 
     def features(self, x):

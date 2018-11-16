@@ -9,6 +9,10 @@ import matplotlib._color_data as mcd
 import seaborn as sns
 
 import gym
+import lab
+
+from rl.reps.reps_numpy import Policy
+from rl.reps.reps_numpy import FourierFeatures
 
 from rl.hyreps import BaumWelch
 from rl.hyreps.hyreps_v0 import HyREPS
@@ -16,6 +20,7 @@ from rl.hyreps.hyreps_v0 import HyREPS
 from rl.hyreps import cart_polar
 
 import pickle
+import copy
 from joblib import Parallel, delayed
 
 
@@ -84,7 +89,7 @@ if __name__ == "__main__":
     n_actions = env.action_space.shape[0]
     n_regions = 5
 
-    file = open("reps_pendulum_ctl.pickle", "rb")
+    file = open("reps_pendulum-v1_ctl.pickle", "rb")
     opt_ctl = pickle.load(file)
     file.close()
     opt_ctl.cov = 0.5 * np.eye(n_actions)
@@ -100,7 +105,7 @@ if __name__ == "__main__":
     regs = np.array([np.finfo(float).tiny, 1e-16, 1e-12, 1e-12])
 
     # do system identification
-    n_jobs = 25
+    n_jobs = 1
     args = [(x, u, w, n_regions, priors, regs) for _ in range(n_jobs)]
     results = Parallel(n_jobs=n_jobs, verbose=0, backend='loky')(map(delayed(baumWelchFunc), args))
     bwl, lklhd = list(map(list, zip(*results)))
@@ -112,9 +117,11 @@ if __name__ == "__main__":
                     n_samples=5000, n_iter=5,
                     n_rollouts=n_rollouts, n_steps=n_steps, n_keep=0,
                     kl_bound=0.1, discount=0.99,
-                    vreg=1e-12, preg=1e-12, cov0=4.0,
+                    vreg=1e-12, preg=1e-12, cov0=8.0,
                     rslds=bw.rslds, priors=priors)
 
+    # overwrite initialization
+    hyreps.rslds = copy.deepcopy(bw.rslds)
     for n in range(n_regions):
         hyreps.ctl.K[n] = bw.rslds.linear_policy[n].K
         hyreps.ctl.cov[n] = bw.rslds.linear_policy[n].cov
@@ -138,7 +145,7 @@ if __name__ == "__main__":
                     n_samples=5000, n_iter=5,
                     n_rollouts=n_rollouts, n_steps=n_steps, n_keep=0,
                     kl_bound=0.1, discount=0.99,
-                    vreg=1e-12, preg=1e-12, cov0=4.0,
+                    vreg=1e-12, preg=1e-12, cov0=8.0,
                     rslds=bw.rslds, priors=priors)
 
     for n in range(n_regions):

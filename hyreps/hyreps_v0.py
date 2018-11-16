@@ -123,10 +123,10 @@ class HyREPS:
         self.discount = discount
 
         self.vreg = vreg
-        self.preg = preg
 
-        self.rslds = rslds
+        self.rslds = copy.deepcopy(rslds)
         self.priors = priors
+        self.preg = preg
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
@@ -141,6 +141,10 @@ class HyREPS:
         self.ctl = Policy(self.n_states, self.n_actions, n_regions, degree=1)
         for n in range(self.n_regions):
             self.ctl.cov[n] = cov0 * self.ctl.cov[n]
+
+        for n in range(self.n_regions):
+            self.rslds.linear_policy[n].K = self.ctl.K[n]
+            self.rslds.linear_policy[n].cov = self.ctl.cov[n]
 
         self.n_pfeat = self.ctl.n_feat
 
@@ -280,7 +284,10 @@ class HyREPS:
 
             rollouts.append(roll)
 
-        return rollouts, merge_dicts(*rollouts)
+        data = merge_dicts(*rollouts)
+        data['u'] = np.reshape(data['u'], (-1, self.n_actions))
+
+        return rollouts, data
 
     def dual(self, var, epsilon, phi, r):
         eta, omega = var[0], var[1:]
@@ -366,15 +373,15 @@ class HyREPS:
 
         def baumWelchFunc(args):
             choice = np.random.choice(25, size=20, replace=False)
-            x, u, w, n_regions, priors, rslds = args
+            x, u, w, n_regions, priors, regs, rslds = args
             x, u, w = x[choice, ...], u[choice, ...], w[choice, ...]
-            bw = BaumWelch(x, u, w, n_regions, priors, rslds=rslds)
+            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds=rslds)
             lklhd = bw.run(n_iter=100, save=False)
             return bw, lklhd
 
         n_jobs = 25
-        args = [(x, u, w, self.n_regions, self.priors, self.rslds) for _ in range(n_jobs)]
-        results = Parallel(n_jobs=n_jobs, verbose=1)(
+        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds) for _ in range(n_jobs)]
+        results = Parallel(n_jobs=n_jobs, verbose=0)(
             map(delayed(baumWelchFunc), args))
         bwl, lklhd = list(map(list, zip(*results)))
 
@@ -470,6 +477,10 @@ class HyREPS:
 
             pi = self.ml_policy()
             self.ctl = pi
+
+            for n in range(self.n_regions):
+                self.rslds.linear_policy[n].K = self.ctl.K[n]
+                self.rslds.linear_policy[n].cov = self.ctl.cov[n]
 
             rwrd = np.sum(eval['r']) / self.n_rollouts
             # rwrd = np.sum(self.data['r']) / np.sum(self.data['done'])

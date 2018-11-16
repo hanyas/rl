@@ -134,7 +134,7 @@ class HyREPS_AC:
 
         self.vreg = vreg
 
-        self.rslds = rslds
+        self.rslds = copy.deepcopy(rslds)
         self.priors = priors
         self.preg = preg
 
@@ -151,6 +151,10 @@ class HyREPS_AC:
         self.ctl = Policy(self.n_states, self.n_actions, n_regions, degree=1)
         for n in range(self.n_regions):
             self.ctl.cov[n] = cov0 * self.ctl.cov[n]
+
+        for n in range(self.n_regions):
+            self.rslds.linear_policy[n].K = self.ctl.K[n]
+            self.rslds.linear_policy[n].cov = self.ctl.cov[n]
 
         self.n_pfeat = self.ctl.n_feat
 
@@ -240,8 +244,6 @@ class HyREPS_AC:
             roll = {'z': np.empty((0,), np.int64),
                     'x': np.empty((0, self.n_states)),
                     'u': np.empty((0, self.n_actions)),
-                    'zn': np.empty((0,), np.int64),
-                    'xn': np.empty((0, self.n_states)),
                     'r': np.empty((0,)),
                     'done': np.empty((0,), np.int64)}
 
@@ -271,7 +273,10 @@ class HyREPS_AC:
 
             rollouts.append(roll)
 
-        return rollouts, merge_dicts(*rollouts)
+        data = merge_dicts(*rollouts)
+        data['u'] = np.reshape(data['u'], (-1, self.n_actions))
+
+        return rollouts, data
 
     def gae(self, data, phi, omega, discount, trace):
         values = np.dot(phi, omega)
@@ -481,6 +486,10 @@ class HyREPS_AC:
             kl_samples = self.kl_samples()
 
             self.ctl = self.ml_policy()
+
+            for n in range(self.n_regions):
+                self.rslds.linear_policy[n].K = self.ctl.K[n]
+                self.rslds.linear_policy[n].cov = self.ctl.cov[n]
 
             rwrd = np.sum(eval['r']) / self.n_rollouts
             # rwrd = np.sum(self.data['r']) / np.sum(self.data['done'])
