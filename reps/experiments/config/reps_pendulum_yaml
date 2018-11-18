@@ -14,8 +14,8 @@ params:
   n_keep: 0
   kl_bound: 0.1
   discount: 0.98
-  vreg: 1.e-16
-  preg: 1.e-12
+  vreg: 1.e-6
+  preg: 1.e-6
   cov0: 8.0
   n_vfeat: 75
   n_pfeat: 75

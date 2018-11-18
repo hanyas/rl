@@ -426,7 +426,7 @@ class ACREPS:
                                        np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
                                        # np.hstack((1.0, self.vfunc.omega)),
                                        method='SLSQP',
-                                       jac=self.grad,
+                                       jac=grad(self.dual),
                                        args=(
                                            self.kl_bound,
                                            self.vfeatures,
@@ -441,7 +441,7 @@ class ACREPS:
             #     res = sc.optimize.minimize(self.dual_eta,
             #                                self.eta,
             #                                method='SLSQP',
-            #                                jac=self.grad_eta,
+            #                                jac=grad(self.dual_eta),
             #                                args=(
             #                                    self.vfunc.omega,
             #                                    self.kl_bound,
@@ -464,7 +464,7 @@ class ACREPS:
             #     res = sc.optimize.minimize(self.dual_omega,
             #                                self.vfunc.omega,
             #                                method='BFGS',
-            #                                jac=self.grad_omega,
+            #                                jac=grad(self.dual_omega),
             #                                args=(
             #                                    self.eta,
             #                                    self.vfeatures,

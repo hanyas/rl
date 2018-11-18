@@ -2,7 +2,7 @@ import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 import autograd.numpy as np
-from autograd import grad
+from autograd import grad, jacobian
 
 import scipy as sc
 from scipy import optimize
@@ -360,76 +360,76 @@ class REPS:
             self.features = self.discount * self.nvfeatures - self.vfeatures +\
                             (1.0 - self.discount) * self.ivfeatures
 
-            # res = sc.optimize.minimize(self.dual,
-            #                            np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
-            #                            # np.hstack((1.0, self.vfunc.omega)),
-            #                            method='SLSQP',
-            #                            jac=self.grad,
-            #                            args=(
-            #                                self.kl_bound,
-            #                                self.features,
-            #                                self.data['r']),
-            #                            bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+            res = sc.optimize.minimize(self.dual,
+                                       np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
+                                       # np.hstack((1.0, self.vfunc.omega)),
+                                       method='SLSQP',
+                                       jac=grad(self.dual),
+                                       args=(
+                                           self.kl_bound,
+                                           self.features,
+                                           self.data['r']),
+                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+
+            self.eta, self.vfunc.omega = res.x[0], res.x[1:]
+
+            # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
+            # for _ in range(250):
+            #     res = sc.optimize.minimize(self.dual_eta,
+            #                                self.eta,
+            #                                method='SLSQP',
+            #                                jac=grad(self.dual_eta),
+            #                                args=(
+            #                                     self.vfunc.omega,
+            #                                     self.kl_bound,
+            #                                     self.features,
+            #                                     self.data['r']),
+            #                                bounds=((1e-8, 1e8),),
+            #                                options={'maxiter': 5})
+            #     # print(res)
+            #     #
+            #     # check = sc.optimize.check_grad(self.dual_eta,
+            #     #                                self.grad_eta,
+            #     #                                res.x,
+            #     #                                self.vfunc.omega,
+            #     #                                self.kl_bound,
+            #     #                                self.features,
+            #     #                                self.data['r'])
+            #     # print('Eta Error', check)
             #
-            # self.eta, self.vfunc.omega = res.x[0], res.x[1:]
-
-            self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
-            for _ in range(250):
-                res = sc.optimize.minimize(self.dual_eta,
-                                           self.eta,
-                                           method='SLSQP',
-                                           jac=self.grad_eta,
-                                           args=(
-                                                self.vfunc.omega,
-                                                self.kl_bound,
-                                                self.features,
-                                                self.data['r']),
-                                           bounds=((1e-8, 1e8),),
-                                           options={'maxiter': 5})
-                # print(res)
-                #
-                # check = sc.optimize.check_grad(self.dual_eta,
-                #                                self.grad_eta,
-                #                                res.x,
-                #                                self.vfunc.omega,
-                #                                self.kl_bound,
-                #                                self.features,
-                #                                self.data['r'])
-                # print('Eta Error', check)
-
-                self.eta = res.x
-
-                res = sc.optimize.minimize(self.dual_omega,
-                                           self.vfunc.omega,
-                                           method='BFGS',
-                                           jac=self.grad_omega,
-                                           args=(
-                                               self.eta,
-                                               self.features,
-                                               self.data['r']),
-                                           options={'maxiter': 250})
-
-                # res = sc.optimize.minimize(self.dual_omega,
-                #                            self.vfunc.omega,
-                #                            method='trust-exact',
-                #                            jac=self.grad_omega,
-                #                            hess=self.hess_omega,
-                #                            args=(
-                #                                self.eta,
-                #                                self.features,
-                #                                self.data['r']))
-                #
-                # print(res)
-                #
-                # check = sc.optimize.check_grad(self.dual_omega,
-                #                                self.grad_omega,
-                #                                res.x,
-                #                                self.eta,
-                #                                self.features,
-                #                                self.data['r'])
-                # print('Omega Error', check)
-
-                self.vfunc.omega = res.x
+            #     self.eta = res.x
+            #
+            #     res = sc.optimize.minimize(self.dual_omega,
+            #                                self.vfunc.omega,
+            #                                method='BFGS',
+            #                                jac=grad(self.dual_omega),
+            #                                args=(
+            #                                    self.eta,
+            #                                    self.features,
+            #                                    self.data['r']),
+            #                                options={'maxiter': 250})
+            #
+            #     # res = sc.optimize.minimize(self.dual_omega,
+            #     #                            self.vfunc.omega,
+            #     #                            method='trust-exact',
+            #     #                            jac=grad(self.dual_omega),
+            #     #                            hess=jacobian(grad(self.dual_omega)),
+            #     #                            args=(
+            #     #                                self.eta,
+            #     #                                self.features,
+            #     #                                self.data['r']))
+            #     #
+            #     # # print(res)
+            #     #
+            #     # check = sc.optimize.check_grad(self.dual_omega,
+            #     #                                self.grad_omega,
+            #     #                                res.x,
+            #     #                                self.eta,
+            #     #                                self.features,
+            #     #                                self.data['r'])
+            #     # print('Omega Error', check)
+            #
+            #     self.vfunc.omega = res.x
 
             kl_samples = self.kl_samples()
 
@@ -459,7 +459,7 @@ if __name__ == "__main__":
     reps = REPS(env=env,
                 n_samples=5000, n_iter=10,
                 n_rollouts=25, n_steps=250, n_keep=0,
-                kl_bound=0.1, discount=0.96,
+                kl_bound=0.1, discount=0.98,
                 n_vfeat=75, n_pfeat=75,
                 vreg=1e-16, preg=1e-16, cov0=8.0,
                 band=np.array([0.5, 0.5, 4.0]))
