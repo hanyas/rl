@@ -1,4 +1,4 @@
-import numpy as np
+import autograd.numpy as np
 import numexpr as ne
 
 from rl.hyreps.logistic_cy import dlogistic
@@ -9,9 +9,7 @@ EXP_MIN = -700.0
 
 
 def logistic(p, feat):
-    n_features = feat.shape[-1]
-    par = np.reshape(p, (-1, n_features), order='C')
-    a = np.einsum('...k,lk->...l', feat, par, optimize=False)
+    a = np.einsum('...k,mlk->...ml', feat, p)
     a = np.clip(a, EXP_MIN, EXP_MAX)
     expa = ne.evaluate('exp(a)')
     l = expa / np.sum(expa, axis=-1, keepdims=True)

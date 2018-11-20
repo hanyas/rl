@@ -1,10 +1,10 @@
-import numpy as np
+import autograd.numpy as np
 
 
 def cart_polar(state):
     ang = np.arctan2(state[..., 1], state[..., 0])
     vel = state[..., 2]
-    polar = np.dstack((ang, vel))
+    polar = np.stack((ang, vel))
     return polar
 
 
@@ -25,3 +25,16 @@ def merge_dicts(*dicts):
         d[key] = np.concatenate(d[key]).squeeze()
 
     return d
+
+
+def div0(a, b):
+    with np.errstate(divide='ignore', invalid='ignore'):
+        c = np.true_divide(a, b)
+        c[ ~ np.isfinite(c)] = 0.0  # -inf inf NaN
+    return c
+
+
+def normalize(x, dim):
+    norm = np.sum(x, axis=dim, keepdims=True)
+    c = div0(x, norm)
+    return c, norm.flatten()

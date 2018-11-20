@@ -1,11 +1,12 @@
-import numpy as np
+import autograd.numpy as np
 import scipy as sc
 from scipy import stats
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
 
-from rl.hyreps.logistic import logistic
+from rl.hyreps import logistic
+from rl.hyreps import normalize
 
 import time
 import pickle
@@ -89,9 +90,11 @@ class LinearGaussian:
         self.const = 1.0 / np.sqrt(np.linalg.det(
             2.0 * np.pi * (self.cov + self.reg * np.eye(self.n_states))))
 
-    def mean(self, x, u):
-        return np.einsum('kh,...th->...tk', self.A, x) + np.einsum(
-            'kh,...th->...tk', self.B, u) + self.C
+    def mean(self, x, u, A=None, B=None, C=None):
+        if all(v is None for v in [A, B, C]):
+            A, B, C = self.A, self.B, self.C
+
+        return np.einsum('kh,...th->...tk', A, x) + np.einsum('kh,...th->...tk', B, u) + C
 
     def prob(self, x, u):
         err = x[..., 1:, :] - self.mean(x[..., :-1, :], u[..., :-1, :])
@@ -122,12 +125,12 @@ class MultiLogistic:
         feat = self.basis.fit_transform(x.reshape(-1, self.n_states))
         return np.reshape(feat, x.shape[:-1] + (self.n_feat,))
 
-    def transitions(self, x):
-        feat = self.features(x)
+    def transitions(self, x, par=None):
+        if par is None:
+            par = self.par
 
-        trans = np.zeros(x.shape[:-1] + (self.n_regions, self.n_regions, ))
-        for i in range(self.n_regions):
-            trans[..., i, :] = logistic(self.par[i, :], feat)
+        feat = self.features(x)
+        trans = logistic(par.reshape((self.n_regions, self.n_regions, -1)), feat)
 
         return trans
 
@@ -156,8 +159,7 @@ class rSLDS:
         trans = self.logistic_model.transitions(xn)
 
         alphan = np.einsum('...mk,...m->...k', trans, alpha)
-        alphan = alphan + np.finfo(float).tiny
-        alphan = alphan / np.sum(alphan, axis=-1, keepdims=True)
+        alphan, _ = normalize(alphan + np.finfo(float).tiny, dim=(-1, ))
 
         zn = np.argmax(alphan, axis=-1)
 

@@ -75,7 +75,7 @@ if __name__ == "__main__":
     bw = bwl[np.argmax(lklhd)]
 
     env._max_episode_steps = 5000
-    from rl.hyreps.hyreps_v0 import HyREPS
+    from rl.hyreps.hyreps import HyREPS
     hyreps = HyREPS(env, n_regions,
                     n_samples=5000, n_iter=10,
                     n_rollouts=25, n_steps=500, n_keep=1000,

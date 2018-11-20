@@ -103,7 +103,29 @@ class Vfunction:
         return np.dot(feat, self.omega)
 
 
-class HyREPS:
+class Qfunction:
+
+    def __init__(self, lgstc_mdl, lin_mdl, vfunc, n_actions):
+        self.lgstc_mdl = lgstc_mdl
+        self.lin_mdl = lin_mdl
+        self.vfunc = vfunc
+
+        self.n_states = self.vfunc.n_states
+        self.n_regions = self.vfunc.n_regions
+        self.n_actions = n_actions
+
+    def features(self, zn, xn):
+        lgstc = self.lgstc_mdl.transitions(xn)
+        vfeat = self.vfunc.features(zn, xn)
+        qfeat = np.einsum('nlm,mnk->lnk', lgstc, vfeat)
+        return qfeat
+
+    def values(self, zn, x, u):
+        feat = self.features(zn, x, u)
+        return np.dot(feat, self.vfunc.omega)
+
+
+class HyREPS_V:
 
     def __init__(self, env, n_regions,
                  n_samples, n_iter,
@@ -145,6 +167,9 @@ class HyREPS:
             self.vfunc = Vfunction(self.n_states, self.n_regions, degree=self.degree)
             self.n_vfeat = self.vfunc.n_feat
 
+        self.qfunc = Qfunction(self.rslds.logistic_model, self.rslds.linear_models,
+                               self.vfunc, self.n_actions)
+
         self.ctl = Policy(self.n_states, self.n_actions, n_regions, degree=1)
         for n in range(self.n_regions):
             self.ctl.cov[n] = cov0 * self.ctl.cov[n]
@@ -167,17 +192,6 @@ class HyREPS:
 
         self.eta = np.array([1.0])
 
-    def smooth(self, x, u):
-        x, u = x[np.newaxis, ...], u[np.newaxis, ...]
-        w = np.ones(x.shape[:-1])
-
-        em = BaumWelch(x, u, w,
-                       self.n_regions, self.priors,
-                       self.preg, rslds=self.rslds)
-
-        em.expectation(ignore_ctl=True)
-        return em.gamma
-
     def sample(self, n_samples, n_keep=0, reset=True, stoch=True, render=False):
         if len(self.rollouts) >= n_keep:
             rollouts = random.sample(self.rollouts, n_keep)
@@ -190,11 +204,9 @@ class HyREPS:
         while True:
             roll = {'zi': np.empty((0,), np.int64),
                     'ai': np.empty((0, self.n_regions)),
-                    'gi': np.empty((0, self.n_regions)),
                     'xi': np.empty((0, self.n_states)),
                     'z': np.empty((0,), np.int64),
                     'a': np.empty((0, self.n_regions)),
-                    'g': np.empty((0, self.n_regions)),
                     'x': np.empty((0, self.n_states)),
                     'u': np.empty((0, self.n_actions)),
                     'zn': np.empty((0,), np.int64),
@@ -243,11 +255,6 @@ class HyREPS:
                     n = n + 1
                     if n >= n_samples:
                         rollouts[-1]['done'][-1] = True
-
-                        for i in range(len(rollouts)):
-                            gamma = self.smooth(rollouts[i]['x'], rollouts[i]['u'])
-                            rollouts[i]['gi'] = gamma[0, [0], :]
-                            rollouts[i]['g'] = gamma[0, ...]
 
                         data = merge_dicts(*rollouts)
                         data['u'] = np.reshape(data['u'], (-1, self.n_actions))
@@ -309,11 +316,6 @@ class HyREPS:
 
             rollouts.append(roll)
 
-        for i in range(len(rollouts)):
-            gamma = self.smooth(rollouts[i]['x'], rollouts[i]['u'])
-            rollouts[i]['gi'] = gamma[0, [0], :]
-            rollouts[i]['g'] = gamma[0, ...]
-
         data = merge_dicts(*rollouts)
         data['u'] = np.reshape(data['u'], (-1, self.n_actions))
 
@@ -358,18 +360,12 @@ class HyREPS:
 
         _, data = self.evaluate(self.n_rollouts, self.n_steps, stoch=True)
 
-        lgstc = self.rslds.logistic_model.transitions(data['xn'])
-
         ivfeatures = self.vfunc.features(data['zi'], data['xi'])
         ivfeatures = np.einsum('nz,znk->nk', data['ai'], ivfeatures)
         ivfeatures = np.mean(ivfeatures, axis=0)
 
         vfeatures = self.vfunc.features(data['z'], data['x'])
-
-        qfeatures = np.empty((self.n_regions, self.n_rollouts * self.n_steps, self.n_vfeat * self.n_regions))
-        feat = self.vfunc.features(data['zn'], data['xn'])
-        for n in range(self.n_regions):
-            qfeatures[n, ...] = np.einsum('nz,znk->nk', lgstc[:, n, :], feat)
+        qfeatures = self.qfunc.features(data['zn'], data['xn'])
 
         features = self.discount * qfeatures - vfeatures + \
                         (1.0 - self.discount) * ivfeatures
@@ -384,24 +380,23 @@ class HyREPS:
         w = np.reshape(w, (self.n_rollouts, self.n_steps))
 
         def baumWelchFunc(args):
-            choice = np.random.choice(25, size=20, replace=False)
             x, u, w, n_regions, priors, regs, rslds = args
+            rollouts = x.shape[0]
+            choice = np.random.choice(rollouts, size=int(0.8 * rollouts), replace=False)
             x, u, w = x[choice, ...], u[choice, ...], w[choice, ...]
-            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds=rslds)
+            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds)
             lklhd = bw.run(n_iter=100, save=False)
             return bw, lklhd
 
         n_jobs = 25
         args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds) for _ in range(n_jobs)]
-        results = Parallel(n_jobs=n_jobs, verbose=0)(
-            map(delayed(baumWelchFunc), args))
+        results = Parallel(n_jobs=n_jobs, verbose=0)(map(delayed(baumWelchFunc), args))
         bwl, lklhd = list(map(list, zip(*results)))
-
-        em = bwl[np.argmax(lklhd)]
+        bw = bwl[np.argmax(lklhd)]
 
         for n in range(self.n_regions):
-            pol.K[n] = em.rslds.linear_policy[n].K
-            pol.cov[n] = em.rslds.linear_policy[n].cov
+            pol.K[n] = bw.rslds.linear_policy[n].K
+            pol.cov[n] = bw.rslds.linear_policy[n].cov
 
         return pol
 
@@ -411,18 +406,12 @@ class HyREPS:
 
             self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
 
-            self.lgstc = self.rslds.logistic_model.transitions(self.data['xn'])
-
             self.ivfeatures = self.vfunc.features(self.data['zi'], self.data['xi'])
             self.ivfeatures = np.einsum('nz,znk->nk', self.data['ai'], self.ivfeatures)
             self.ivfeatures = np.mean(self.ivfeatures, axis=0)
 
             self.vfeatures = self.vfunc.features(self.data['z'], self.data['x'])
-
-            self.qfeatures = np.empty((self.n_regions, self.n_samples, self.n_vfeat * self.n_regions))
-            feat = self.vfunc.features(self.data['zn'], self.data['xn'])
-            for n in range(self.n_regions):
-                self.qfeatures[n, ...] = np.einsum('nz,znk->nk', self.lgstc[:, n, :], feat)
+            self.qfeatures = self.qfunc.features(self.data['zn'], self.data['xn'])
 
             self.features = self.discount * self.qfeatures - self.vfeatures +\
                             (1.0 - self.discount) * self.ivfeatures

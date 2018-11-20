@@ -1,22 +1,19 @@
-import numpy as np
-
-from sklearn.metrics import mean_squared_error
-
-# import matplotlib.pyplot as plt
-
-from rl.hyreps.rslds import rSLDS
-
+import autograd.numpy as np
 from scipy.special import logit, logsumexp
 
+from sklearn.metrics import mean_squared_error
 from sklearn import linear_model
 
+from rl.hyreps import rSLDS
+from rl.hyreps import div0, normalize
+
+# import matplotlib.pyplot as plt
 
 class BaumWelch:
 
     def __init__(self, x, u, w,
                  n_regions, priors,
-                 regs,
-                 **kwargs):
+                 regs, rslds):
 
         self.n_rollouts = x.shape[0]
         self.n_steps = x.shape[1]
@@ -37,16 +34,18 @@ class BaumWelch:
         self.lgstc_reg = regs[2]
         self.ctl_reg = regs[3]
 
-        self.rslds = rSLDS(self.n_states, self.n_actions,
-                           self.n_regions, self.dyn_prior, self.ctl_prior)
-
-        if 'rslds' in kwargs:
-            rslds = kwargs.get('rslds', False)
+        if rslds==None:
+            self.rslds = rSLDS(self.n_states, self.n_actions,
+                               self.n_regions, self.dyn_prior, self.ctl_prior)
+            self.update = True
+        else:
+            self.rslds = rSLDS(self.n_states, self.n_actions,
+                               self.n_regions, self.dyn_prior, self.ctl_prior)
             self.rslds.linear_models = rslds.linear_models
             self.rslds.logistic_model = rslds.logistic_model
+            # self.rslds.linear_policy = rslds.linear_policy
             self.update = False
-        else:
-            self.update = True
+
 
         self.alpha = np.zeros((self.n_rollouts, self.n_steps, self.n_regions))
         self.beta = np.zeros((self.n_rollouts, self.n_steps, self.n_regions))
@@ -66,129 +65,71 @@ class BaumWelch:
         x = np.log(var + np.finfo(float).tiny)
         return x - logsumexp(x, 1)[:, np.newaxis, :]
 
-    def forward(self, x, dyn, lgstc, ctl, evd):
+    def forward(self, x, dyn, lgstc, ctl, evdnc):
         n_rollouts = x.shape[0]
         n_steps = x.shape[1]
 
-        alpha = np.empty((n_rollouts, n_steps, self.n_regions))
+        alpha = np.empty((n_rollouts, n_steps, self.n_regions), dtype=np.float128)
         norm = np.empty((n_rollouts, n_steps))
 
         p = np.ones(self.n_regions) / self.n_regions
         alpha[:, 0, :] = np.einsum('nml,m->nl', lgstc[:, 0, :, :], p)
+        alpha[:, 0, :], norm[:, 0] = normalize(alpha[:, 0, :] + self.msg_reg, dim=(1,))
 
-        alpha[:, 0, :] = alpha[:, 0, :] * evd[:, 0, :] + self.msg_reg
-        norm[:, 0] = np.sum(alpha[:, 0, :], axis=-1)
-        alpha[:, 0, :] = alpha[:, 0, :] / norm[:, 0, np.newaxis]
+        # alpha[:, 0, :] = alpha[:, 0, :] + self.msg_reg
+        # norm[:, 0] = np.sum(alpha[:, 0, :], axis=-1)
+        # alpha[:, 0, :] = alpha[:, 0, :] / norm[:, 0, np.newaxis]
 
         for t in range(1, n_steps):
             alpha[:, t, :] = np.einsum('nml,nm->nl', lgstc[:, t, :, :],
                                        alpha[:, t - 1, :] * dyn[:, t, :]) * ctl[:, t, :]
+            alpha[:, t, :], norm[:, t] = normalize(alpha[:, t, :] + self.msg_reg, dim=(1, ))
 
-            alpha[:, t, :] = alpha[:, t, :] * evd[:, t, :] + self.msg_reg
-            norm[:, t] = np.sum(alpha[:, t, :], axis=-1)
-            alpha[:, t, :] = alpha[:, t, :] / norm[:, t, np.newaxis]
+            # alpha[:, t, :] = alpha[:, t, :] + self.msg_reg
+            # norm[:, t] = np.sum(alpha[:, t, :], axis=-1)
+            # alpha[:, t, :] = alpha[:, t, :] / norm[:, t, np.newaxis]
 
         return alpha, norm
 
-    # def forward(self, x, dyn, lgstc, ctl, evd):
-    #     n_rollouts = x.shape[0]
-    #     n_steps = x.shape[1]
-    #
-    #     alpha = np.empty((n_rollouts, n_steps, self.n_regions))
-    #     norm = np.empty((n_rollouts, n_steps))
-    #
-    #     p = np.ones(self.n_regions) / self.n_regions
-    #     alpha[:, 0, :] = np.einsum('nml,m->nl', lgstc[:, 0, :, :], p)
-    #
-    #     alpha[:, 0, :] = alpha[:, 0, :] + self.msg_reg
-    #     norm[:, 0] = np.sum(alpha[:, 0, :], axis=-1)
-    #     alpha[:, 0, :] = alpha[:, 0, :] / norm[:, 0, np.newaxis]
-    #
-    #     for t in range(1, n_steps):
-    #         alpha[:, t, :] = np.einsum('nml,nm->nl', lgstc[:, t, :, :],
-    #                                    alpha[:, t - 1, :] * dyn[:, t, :]) * ctl[:, t, :]
-    #
-    #         alpha[:, t, :] = alpha[:, t, :] + self.msg_reg
-    #         norm[:, t] = np.sum(alpha[:, t, :], axis=-1)
-    #         alpha[:, t, :] = alpha[:, t, :] / norm[:, t, np.newaxis]
-    #
-    #     return alpha, norm
-
-    def backward(self, x, scale, dyn, lgstc, ctl, evd):
+    def backward(self, x, scale, dyn, lgstc, ctl, evdnc):
         n_rollouts = x.shape[0]
         n_steps = x.shape[1]
 
-        norm = np.empty((n_rollouts, n_steps))
+        beta = np.empty((n_rollouts, n_steps, self.n_regions), dtype=np.float128)
 
-        beta = np.empty((n_rollouts, n_steps, self.n_regions))
-
-        beta[:, -1, :] = np.ones((n_rollouts, self.n_regions))
+        beta[:, -1, :] = np.ones((n_rollouts, self.n_regions)) / scale[:, -1, np.newaxis]
 
         for t in range(n_steps - 2, -1, -1):
             beta[:, t, :] = np.einsum('nml,nl->nm', lgstc[:, t + 1, :, :],
-                                      ((beta[:, t + 1, :] * evd[:, t + 1, :]) * ctl[:, t + 1, :])) * dyn[:, t + 1, :]
-
-            beta[:, t, :] = beta[:, t, :] + self.msg_reg
-            norm[:, t] = np.sum(beta[:, t, :], axis=-1)
-            beta[:, t, :] = beta[:, t, :] / norm[:, t, np.newaxis]
+                                      (beta[:, t + 1, :] * ctl[:, t + 1, :])) * dyn[:, t + 1, :]
+            beta[:, t, :] = beta[:, t, :] / scale[:, t, np.newaxis]
 
         return beta
 
-    # def backward(self, x, scale, dyn, lgstc, ctl, evd):
-    #     n_rollouts = x.shape[0]
-    #     n_steps = x.shape[1]
-    #
-    #     beta = np.empty((n_rollouts, n_steps, self.n_regions))
-    #
-    #     beta[:, -1, :] = np.ones((n_rollouts, self.n_regions)) / scale[:, -1, np.newaxis]
-    #
-    #     for t in range(n_steps - 2, -1, -1):
-    #         beta[:, t, :] = np.einsum('nml,nl->nm', lgstc[:, t + 1, :, :],
-    #                                   (beta[:, t + 1, :] * ctl[:, t + 1, :])) * dyn[:, t + 1, :]
-    #         beta[:, t, :] = beta[:, t, :] / scale[:, t, np.newaxis]
-    #
-    #     return beta
-
-    def forward_backward(self, alpha, beta):
-        gamma = (alpha * beta + self.msg_reg) / np.sum(alpha * beta + self.msg_reg,
-                                                   axis=2, keepdims=True)
-        return gamma
-
-    def marginal(self, x, alpha, beta, dyn, lgstc, ctl, evd):
+    def marginal(self, x, alpha, beta, dyn, lgstc, ctl, evdnc):
         n_rollouts = x.shape[0]
         n_steps = x.shape[1]
 
-        zeta = np.empty((n_rollouts, n_steps - 1, self.n_regions, self.n_regions))
-        norm = np.empty((n_rollouts, n_steps - 1))
+        zeta = np.empty((n_rollouts, n_steps - 1, self.n_regions, self.n_regions), dtype=np.float128)
 
         for t in range(n_steps - 1):
             aux = np.einsum('nm,nl->nml', alpha[:, t, :],
-                            dyn[:, t + 1, :] * (beta[:, t + 1, :] * evd[:, t + 1, :]) * ctl[:, t + 1, :])
+                            dyn[:, t + 1, :] * beta[:, t + 1, :] * ctl[:, t + 1, :])
             zeta[:, t, :, :] = lgstc[:, t + 1, :, :] * aux
+            zeta[:, t, :, :], _ = normalize(zeta[:, t, :, :] + self.msg_reg, dim=(2, 1))
 
-            zeta[:, t, :, :] = zeta[:, t, :, :]  + self.msg_reg
-            norm[:, t] = np.sum(zeta[:, t, :, :], axis=(2, 1))
-            zeta[:, t, :, :] = zeta[:, t, :, :] / norm[:, t, np.newaxis, np.newaxis]
+            # zeta[:, t, :, :] = zeta[:, t, :, :] + self.msg_reg
+            # norm[:, t] = np.sum(zeta[:, t, :, :], axis=(2, 1))
+            # zeta[:, t, :, :] = zeta[:, t, :, :] / norm[:, t, np.newaxis, np.newaxis]
 
         return zeta
 
-    # def marginal(self, x, alpha, beta, dyn, lgstc, ctl, evd):
-    #     n_rollouts = x.shape[0]
-    #     n_steps = x.shape[1]
-    #
-    #     zeta = np.empty((n_rollouts, n_steps - 1, self.n_regions, self.n_regions))
-    #     norm = np.empty((n_rollouts, n_steps - 1))
-    #
-    #     for t in range(n_steps - 1):
-    #         aux = np.einsum('nm,nl->nml', alpha[:, t, :],
-    #                         dyn[:, t + 1, :] * beta[:, t + 1, :] * ctl[:, t + 1, :])
-    #         zeta[:, t, :, :] = lgstc[:, t + 1, :, :] * aux
-    #
-    #         zeta[:, t, :, :] = zeta[:, t, :, :] + self.msg_reg
-    #         norm[:, t] = np.sum(zeta[:, t, :, :], axis=(2, 1))
-    #         zeta[:, t, :, :] = zeta[:, t, :, :] / norm[:, t, np.newaxis, np.newaxis]
-    #
-    #     return zeta
+    def forward_backward(self, alpha, beta):
+        gamma, _ = normalize(alpha * beta + self.msg_reg, dim=(2, ))
+
+        # gamma = (alpha * beta + self.msg_reg) / np.sum(alpha * beta + self.msg_reg,
+        #                                            axis=2, keepdims=True)
+        return gamma
 
     def predict(self, xt, ut):
         n_rollouts, n_steps = xt.shape[0], xt.shape[1]
@@ -217,19 +158,15 @@ class BaumWelch:
 
         return z, x, alpha, state_err, u, action_err
 
-    def expectation(self, ignore_ctl=False):
+    def expectation(self):
         for i in range(self.n_regions):
             self.dyn[:, 0, i] = self.rslds.init_state.pdf(self.x[:, 0, :])
             self.rslds.linear_models[i].update()
             self.dyn[:, 1:, i] = self.rslds.linear_models[i].prob(self.x, self.u)
-            if not ignore_ctl:
-                self.rslds.linear_policy[i].update()
-                self.ctl[:, :, i] = self.rslds.linear_policy[i].prob(self.x, self.u)
-            else:
-                self.ctl[:, :, i] = np.ones(self.u.shape[:-1])
+            self.rslds.linear_policy[i].update()
+            self.ctl[:, :, i] = self.rslds.linear_policy[i].prob(self.x, self.u)
 
         self.lgstc = self.rslds.logistic_model.transitions(self.x)
-
         self.evidence = np.exp(self.lognorm(self.dyn))
 
         self.alpha, self.lik = self.forward(self.x, self.dyn, self.lgstc, self.ctl, self.evidence)
@@ -237,6 +174,12 @@ class BaumWelch:
         self.gamma = self.forward_backward(self.alpha, self.beta)
         self.zeta = self.marginal(self.x, self.alpha, self.beta, self.dyn, self.lgstc, self.ctl, self.evidence)
         self.theta = np.argmax(self.gamma, axis=-1)
+
+        self.alpha = self.alpha.astype(np.float64)
+        self.beta = self.beta.astype(np.float64)
+        self.gamma = self.gamma.astype(np.float64)
+        self.zeta = self.zeta.astype(np.float64)
+        self.lik = self.lik.astype(np.float64)
 
         liklhd = np.sum(np.log(self.lik), axis=(0, 1))
 
@@ -284,15 +227,20 @@ class BaumWelch:
                 tmpx = np.einsum('ntk,nth->ntkh', self.x[:, :-1, :], self.x[:, :-1, :])
                 tmpu = np.einsum('ntk,nth->ntkh', self.u[:, :-1, :], self.u[:, :-1, :])
 
-                reg = linear_model.Ridge(alpha=self.dyn_reg, fit_intercept=False, tol=1e-4, solver="auto", max_iter=None)
                 for i in range(self.n_regions):
                     aux = np.einsum('ntk,nth->ntkh', self.x[:, 1:, :] - np.einsum('kh,nth->ntk', self.rslds.linear_models[i].B, self.u[:, :-1, :]) - self.rslds.linear_models[i].C, self.x[:, :-1, :])
+
+                    # self.rslds.linear_models[i].A = np.dot(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], aux), np.linalg.pinv(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], tmpx)))
+                    reg = linear_model.Ridge(alpha=self.dyn_reg, fit_intercept=False, tol=1e-6, solver="auto", max_iter=None)
                     reg.fit(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], tmpx), np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], aux))
                     self.rslds.linear_models[i].A = reg.coef_
-                    # self.rslds.linear_models[i].A = np.dot(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], aux), np.linalg.pinv(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], tmpx)))
 
                     aux = np.einsum('ntk,nth->ntkh', self.x[:, 1:, :] - np.einsum('kh,nth->ntk', self.rslds.linear_models[i].A, self.x[:, :-1, :]) - self.rslds.linear_models[i].C, self.u[:, :-1, :])
-                    self.rslds.linear_models[i].B = np.dot(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], aux), np.linalg.pinv(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], tmpu)))
+
+                    # self.rslds.linear_models[i].B = np.dot(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], aux), np.linalg.pinv(np.einsum('nt,ntkh->kh', self.gamma[:, 1:, i], tmpu)))
+                    reg = linear_model.Ridge(alpha=self.dyn_reg, fit_intercept=False, tol=1e-6, solver="auto", max_iter=None)
+                    reg.fit(np.einsum('nt,ntkh->hk', self.gamma[:, 1:, i], tmpu), np.einsum('nt,ntkh->hk', self.gamma[:, 1:, i], aux))
+                    self.rslds.linear_models[i].B = reg.coef_
 
                     aux = self.x[:, 1:, :] - np.einsum('kh,nth->ntk', self.rslds.linear_models[i].A, self.x[:, :-1, :]) - np.einsum('kh,nth->ntk', self.rslds.linear_models[i].B, self.u[:, :-1, :])
                     self.rslds.linear_models[i].C = np.einsum('nt,ntk->k', self.gamma[:, 1:, i], aux) / np.sum(self.gamma[:, 1:, i], axis=(0, 1))
@@ -303,39 +251,44 @@ class BaumWelch:
                     self.rslds.linear_models[i].cov = (self.dyn_prior["psi"] + (self.n_rollouts + self.n_steps) * self.rslds.linear_models[i].cov) / (self.dyn_prior["nu"] + (self.n_rollouts + self.n_steps) + self.n_states + 1)
 
                 # switching logistic functions
-                feat = self.feat[:, 1:, :].reshape((-1, self.rslds.logistic_model.n_feat))
-                zeta = self.zeta.reshape((-1, self.n_regions, self.n_regions))
-
-                reg = linear_model.Ridge(alpha=self.lgstc_reg, fit_intercept=False, tol=1e-4, solver="auto", max_iter=None)
                 for i in range(self.n_regions):
-                    fopt = zeta[:, i, :] / np.sum(zeta[:, i, :], axis=-1, keepdims=True)
-                    fopt = np.clip(fopt, 0.00001, 0.99999)
-                    lgt = logit(fopt)
+                    feat = self.feat[:, 1:, :].reshape((-1, self.rslds.logistic_model.n_feat))
+                    zeta = self.zeta.reshape((-1, self.n_regions, self.n_regions))
 
-                    reg.fit(feat, lgt)
-                    self.rslds.logistic_model.par[i, :] = np.reshape(reg.coef_, (self.rslds.logistic_model.n_feat * self.n_regions), order='C')
+                    for i in range(self.n_regions):
+                        fopt, _ = normalize(zeta[:, i, :] + self.msg_reg, dim=(1, ))
+                        fopt = np.clip(fopt, 0.00001, 0.99999)
+                        lgt = logit(fopt)
 
-                # reg = linear_model.LogisticRegression(solver='lbfgs', fit_intercept=False,
-                #                          multi_class='multinomial', max_iter=100)
-                # for i in range(self.n_regions):
-                #     fopt = zeta[:, i, :] / np.sum(zeta[:, i, :], axis=-1, keepdims=True)
-                #     labels = np.tile(np.arange(self.n_regions), fopt.shape[0])
-                #     inputs = np.repeat(feat, self.n_regions, 0)
-                #     weights = fopt.reshape(-1, )
-                #
-                #     reg.fit(inputs, labels, weights)
-                #     self.rslds.logistic_model.par[i, :] = np.reshape(reg.coef_, (self.rslds.logistic_model.n_feat * self.n_regions), order='C')
+                        reg = linear_model.Ridge(alpha=self.lgstc_reg, fit_intercept=False, tol=1e-6, solver="auto", max_iter=None)
+                        reg.fit(feat, lgt)
+                        self.rslds.logistic_model.par[i, :] = np.reshape(reg.coef_, (self.rslds.logistic_model.n_feat * self.n_regions), order='C')
+
+                    # for i in range(self.n_regions):
+                    #     fopt, _ = normalize(zeta[:, i, :] + self.msg_reg, dim=(1, ))
+                    #     labels = np.tile(np.arange(self.n_regions), fopt.shape[0])
+                    #     inputs = np.repeat(feat, self.n_regions, 0)
+                    #     weights = fopt.reshape(-1, )
+                    #
+                    #     reg = linear_model.LogisticRegression(
+                    #         solver='lbfgs', fit_intercept=False,
+                    #         C=1.0 / self.lgstc_reg,
+                    #         multi_class='multinomial', max_iter=100, n_jobs=-1)
+                    #
+                    #     reg.fit(inputs, labels, weights)
+                    #     self.rslds.logistic_model.par[i, :] = np.reshape(reg.coef_, (self.rslds.logistic_model.n_feat * self.n_regions), order='C')
 
             # controller matrices
             state = np.concatenate((np.ones((self.n_rollouts, self.n_steps, 1)), self.x), axis=-1)
             tmps = np.einsum('ntk,nth->ntkh', state, state)
 
-            reg = linear_model.Ridge(alpha=self.ctl_reg, fit_intercept=False, tol=1e-4, solver="auto", max_iter=None)
             for i in range(self.n_regions):
                 aux = np.einsum('ntk,nth->ntkh', self.u, state)
+
+                # self.rslds.linear_policy[i].K = np.dot(np.einsum('nt,ntkh->kh', self.gamma[..., i], aux), np.linalg.inv(np.einsum('nt,ntkh->kh', self.gamma[..., i], tmps)))
+                reg = linear_model.Ridge(alpha=self.ctl_reg, fit_intercept=False, tol=1e-4, solver="auto", max_iter=None)
                 reg.fit(np.einsum('nt,ntkh->kh', self.gamma[..., i], tmps), np.einsum('nt,ntkh->kh', self.gamma[..., i], aux).squeeze())
                 self.rslds.linear_policy[i].K = reg.coef_.reshape(self.n_actions, -1)
-                # self.rslds.linear_policy[i].K = np.dot(np.einsum('nt,ntkh->kh', self.gamma[..., i], aux), np.linalg.inv(np.einsum('nt,ntkh->kh', self.gamma[..., i], tmps)))
 
                 aux = self.u - np.einsum('kh,nth->ntk', self.rslds.linear_policy[i].K, state)
                 Z = (np.square(np.sum(self.gamma[..., i], axis=(0,1))) - np.sum(np.square(self.gamma[..., i]), axis=(0,1))) / np.sum(self.gamma[..., i], axis=(0,1))
@@ -376,6 +329,7 @@ if __name__ == "__main__":
     dyn_prior = {"nu": n_states + 1, "psi": 1e-2}
     ctl_prior = {"nu": n_actions + 1, "psi": 1.0}
     priors = [dyn_prior, ctl_prior]
+    regs = np.array([np.finfo(np.float64).tiny, 1e-16, 1e-12, 1e-16])
 
-    bw = BaumWelch(x, u, w, n_regions, priors)
+    bw = BaumWelch(x, u, w, n_regions, priors, regs)
     bw.run(10, save=False)

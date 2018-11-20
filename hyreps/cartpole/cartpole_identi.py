@@ -6,7 +6,7 @@ import numpy as np
 import gym
 
 from rl.hyreps import BaumWelch
-from rl.hyreps.hyreps_v0 import HyREPS
+from rl.hyreps.hyreps import HyREPS
 
 import pickle
 from joblib import Parallel, delayed
