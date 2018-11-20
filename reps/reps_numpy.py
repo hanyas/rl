@@ -138,9 +138,6 @@ class REPS:
         self.data = {}
         self.rollouts = []
 
-        self.vfeatures = None
-        self.ivfeatures = None
-        self.nvfeatures = None
         self.features = None
 
         self.eta = np.array([1.0])
@@ -233,20 +230,31 @@ class REPS:
 
         return rollouts, data
 
-    def dual(self, var, epsilon, phi, r):
-        eta, omega = var[0], var[1:]
-        adv = r + np.dot(phi, omega)
+    def featurize(self, data):
+        ivfeatures = np.mean(self.vfunc.features(data['xi']),
+                                  axis=0, keepdims=True)
+        vfeatures = self.vfunc.features(data['x'])
+        nvfeatures = self.vfunc.features(data['xn'])
+        features = self.discount * nvfeatures - vfeatures + \
+                        (1.0 - self.discount) * ivfeatures
+        return features
+
+    def weights(self, eta, omega, features, rwrd):
+        adv = rwrd + np.dot(features, omega)
         delta = adv - np.max(adv)
         w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        g = eta * epsilon + np.max(adv) + eta * np.log(np.mean(w, axis=0))
+        return w, delta, np.max(adv)
+
+    def dual(self, var, epsilon, phi, r):
+        eta, omega = var[0], var[1:]
+        w, _, max_adv = self.weights(eta, omega, phi, r)
+        g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
         g = g + self.vreg * np.sum(omega ** 2)
         return g
 
     def grad(self, var, epsilon, phi, r):
         eta, omega = var[0], var[1:]
-        adv = r + np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+        w, delta, max_adv = self.weights(eta, omega, phi, r)
 
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
@@ -257,41 +265,30 @@ class REPS:
         return np.hstack((deta, domega))
 
     def dual_eta(self, eta, omega, epsilon, phi, r):
-        adv = r + np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        g = eta * epsilon + np.max(adv) + eta * np.log(np.mean(w, axis=0))
-        g = g + self.vreg * np.sum(omega ** 2)
+        w, _, max_adv = self.weights(eta, omega, phi, r)
+        g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
         return g
 
     def grad_eta(self, eta, omega, epsilon, phi, r):
-        adv = r + np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+        w, delta, max_adv = self.weights(eta, omega, phi, r)
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
         return deta
 
     def dual_omega(self, omega, eta, phi, r):
-        adv = r + np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        g = np.max(adv) + eta * np.log(np.mean(w, axis=0))
+        w, delta, max_adv = self.weights(eta, omega, phi, r)
+        g = max_adv + eta * np.log(np.mean(w, axis=0))
         g = g + self.vreg * np.sum(omega ** 2)
         return g
 
     def grad_omega(self, omega, eta, phi, r):
-        adv = r + np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+        w, delta, max_adv = self.weights(eta, omega, phi, r)
         domega = np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
         return domega
 
     def hess_omega(self, omega, eta, phi, r):
-        adv = r + np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+        w, delta, max_adv = self.weights(eta, omega, phi, r)
         w = w / np.sum(w, axis=0)
         aux = np.sum(w[:, np.newaxis] * phi, axis=0)
         tmp = phi - aux
@@ -299,9 +296,7 @@ class REPS:
         return homega
 
     def kl_samples(self):
-        adv = self.data['r'] + np.dot(self.features, self.vfunc.omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
@@ -321,10 +316,7 @@ class REPS:
     def ml_policy(self):
         pol = copy.deepcopy(self.ctl)
 
-        adv = self.data['r'] + np.dot(self.features, self.vfunc.omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
-
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
         psi = self.ctl.features(self.data['x'])
 
         res = sc.optimize.minimize(self.log_lkhd, pol.K, method='SLSQP',
@@ -352,13 +344,7 @@ class REPS:
             _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
             self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
-
-            self.ivfeatures = np.mean(self.vfunc.features(self.data['xi']),
-                                      axis=0, keepdims=True)
-            self.vfeatures = self.vfunc.features(self.data['x'])
-            self.nvfeatures = self.vfunc.features(self.data['xn'])
-            self.features = self.discount * self.nvfeatures - self.vfeatures +\
-                            (1.0 - self.discount) * self.ivfeatures
+            self.features = self.featurize(self.data)
 
             res = sc.optimize.minimize(self.dual,
                                        np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),

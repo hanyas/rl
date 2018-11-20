@@ -89,7 +89,7 @@ if __name__ == "__main__":
     n_actions = env.action_space.shape[0]
     n_regions = 5
 
-    file = open("reps_pendulum-v1_ctl.pickle", "rb")
+    file = open("reps_pndl-v1_ctl.pickle", "rb")
     opt_ctl = pickle.load(file)
     file.close()
     opt_ctl.cov = 0.5 * np.eye(n_actions)

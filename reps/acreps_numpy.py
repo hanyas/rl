@@ -71,12 +71,6 @@ class Policy:
         else:
             return mean
 
-    def logprob(self, x, u):
-        feat = self.features(x)
-        mean = np.einsum('...k,mk->...m', feat, self.K)
-        prob = sc.stats.norm(mean, np.sqrt(self.cov)).pdf(u)
-        return np.log(prob)
-
 
 class Vfunction:
 
@@ -169,8 +163,6 @@ class ACREPS:
         self.rollouts = []
 
         self.vfeatures = None
-        self.mvfeatures = None
-
         self.qfeatures = None
         self.nqfeatures = None
 
@@ -297,65 +289,61 @@ class ACREPS:
                 targets[k] = rewards[k] + discount * rewards[k + 1]
         return targets
 
-    def dual(self, var, epsilon, phi, mphi, targets):
-        eta, omega = var[0], var[1:]
-        adv = targets - np.dot(phi, omega)
+    def featurize(self, data):
+        vfeatures = self.vfunc.features(data['x'])
+        mvfeatures = np.mean(vfeatures, axis=0, keepdims=True)
+        return vfeatures - mvfeatures
+
+    def weights(self, eta, omega, features, targets):
+        adv = targets - np.dot(features, omega)
         delta = adv - np.max(adv)
         w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        g = mphi @ omega + eta * epsilon + np.max(adv) + eta * np.log(np.mean(w, axis=0))
+        return w, delta, np.max(adv)
+
+    def dual(self, var, epsilon, phi, targets):
+        eta, omega = var[0], var[1:]
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
+        g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
         g = g + self.vreg * (omega.T @ omega)
         return g
 
-    def grad(self, var, epsilon, phi, mphi, targets):
+    def grad(self, var, epsilon, phi, targets):
         eta, omega = var[0], var[1:]
-        adv = targets - np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+        w, delta, max_adv = self.weights(eta, omega, phi, targets)
 
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
 
-        domega = mphi - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
+        domega = - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
 
         return np.hstack((deta, domega))
 
     def dual_eta(self, eta, omega, epsilon, phi, targets):
-        adv = targets - np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        g = eta * epsilon + np.max(adv) + eta * np.log(np.mean(w, axis=0))
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
+        g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
         return g
 
     def grad_eta(self, eta, omega, epsilon, phi, targets):
-        adv = targets - np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
+        w, delta, max_adv = self.weights(eta, omega, phi, targets)
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
         return deta
 
-    def dual_omega(self, omega, eta, phi, mphi, targets):
-        adv = targets - np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        g = mphi @ omega + \
-            np.max(adv) + eta * np.log(np.mean(w, axis=0))
+    def dual_omega(self, omega, eta, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
+        g = max_adv + eta * np.log(np.mean(w, axis=0))
         g = g + self.vreg * np.sum(omega ** 2)
         return g
 
-    def grad_omega(self, omega, eta, phi, mphi, targets):
-        adv = targets - np.dot(phi, omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
-        domega = mphi - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
+    def grad_omega(self, omega, eta, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
+        domega = - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
         return domega
 
     def kl_samples(self):
-        adv = self.targets - np.dot(self.vfeatures, self.vfunc.omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
@@ -375,10 +363,7 @@ class ACREPS:
     def ml_policy(self):
         pol = copy.deepcopy(self.ctl)
 
-        adv = self.targets - np.dot(self.vfeatures, self.vfunc.omega)
-        delta = adv - np.max(adv)
-        w = np.exp(np.clip(delta / self.eta, EXP_MIN, EXP_MAX))
-
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
         psi = self.ctl.features(self.data['x'])
 
         res = sc.optimize.minimize(self.log_lkhd, pol.K, method='SLSQP',
@@ -406,12 +391,10 @@ class ACREPS:
             _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
             self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
-
-            self.vfeatures = self.vfunc.features(self.data['x'])
-            self.mvfeatures = np.mean(self.vfeatures, axis=0)
-            # self.qfeatures = self.qfunc.features(self.data['x'], self.data['u'])
+            self.vfeatures = self.featurize(self.data)
 
             # un = self.ctl.actions(self.data['xn'], False).reshape((-1, 1))
+            # self.qfeatures = self.qfunc.features(self.data['x'], self.data['u'])
             # self.nqfeatures = self.qfunc.features(self.data['xn'], un)
 
             # self.qfunc.theta, self.targets = self.lstd(self.nqfeatures, self.qfeatures,
@@ -430,7 +413,6 @@ class ACREPS:
                                        args=(
                                            self.kl_bound,
                                            self.vfeatures,
-                                           self.mvfeatures,
                                            self.targets),
                                        bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
 
@@ -468,7 +450,6 @@ class ACREPS:
             #                                args=(
             #                                    self.eta,
             #                                    self.vfeatures,
-            #                                    self.mvfeatures,
             #                                    self.targets),
             #                                options={'maxiter': 100})
             #
@@ -478,7 +459,6 @@ class ACREPS:
             #     #                                self.grad_omega, res.x,
             #     #                                self.eta,
             #     #                                self.vfeatures,
-            #     #                                self.mvfeatures,
             #     #                                self.targets)
             #     # print('Omega Error', check)
             #
@@ -512,7 +492,7 @@ if __name__ == "__main__":
     acreps = ACREPS(env=env,
                     n_samples=5000, n_iter=15,
                     n_rollouts=20, n_steps=250, n_keep=0,
-                    kl_bound=0.1, discount=0.99, trace=0.95,
+                    kl_bound=0.1, discount=0.98, trace=0.95,
                     n_vfeat=75, n_pfeat=75,
                     vreg=1e-12, preg=1e-12, cov0=16.0,
                     s_band=np.array([0.5, 0.5, 4.0]),

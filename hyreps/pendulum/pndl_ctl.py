@@ -60,7 +60,7 @@ if __name__ == "__main__":
     n_actions = env.action_space.shape[0]
     n_regions = 5
 
-    file = open("reps_pendulum-v1_ctl.pickle", "rb")
+    file = open("reps_pndlv1_ctl.pickle", "rb")
     opt_ctl = pickle.load(file)
     file.close()
     opt_ctl.cov = 0.5 * np.eye(n_actions)
@@ -74,7 +74,7 @@ if __name__ == "__main__":
     regs = np.array([np.finfo(float).tiny, 1e-16, 1e-12, 1e-12])
 
     # do system identification
-    n_jobs = 25
+    n_jobs = 1
     args = [(x, u, w, n_regions, priors, regs) for _ in range(n_jobs)]
     results = Parallel(n_jobs=n_jobs, verbose=0)(map(delayed(baumWelchFunc), args))
     bwl, lklhd = list(map(list, zip(*results)))
@@ -82,36 +82,36 @@ if __name__ == "__main__":
     bw = bwl[np.argmax(lklhd)]
 
 
-    # dyn_prior = {"nu": 7, "psi": 1e-2}
-    # ctl_prior = {"nu": 3, "psi": 8.0}
-    # priors = [dyn_prior, ctl_prior]
-    # regs = np.array([np.finfo(float).tiny, 1e-16, 1e-6, 1e-6])
-    #
-    # env._max_episode_steps = 5000
-    # from rl.hyreps.hyreps_v0 import HyREPS
-    # hyreps = HyREPS(env, n_regions,
-    #                 n_samples=5000, n_iter=10,
-    #                 n_rollouts=25, n_steps=250, n_keep=0,
-    #                 kl_bound=0.1, discount=0.99,
-    #                 vreg=1e-16, preg=regs, cov0=8.0,
-    #                 rslds=bw.rslds, priors=priors,
-    #                 band=0.5 * np.array([0.5, 0.5, 4.0]), n_vfeat=75)
-
-
     dyn_prior = {"nu": 7, "psi": 1e-2}
     ctl_prior = {"nu": 3, "psi": 8.0}
     priors = [dyn_prior, ctl_prior]
-    regs = np.array([np.finfo(float).tiny, 1e-16, 1e-12, 1e-12])
+    regs = np.array([np.finfo(float).tiny, 1e-16, 1e-6, 1e-6])
 
     env._max_episode_steps = 5000
-    from rl.hyreps.hyreps_v1 import HyREPS
+    from rl.hyreps.hyreps_v0 import HyREPS
     hyreps = HyREPS(env, n_regions,
                     n_samples=5000, n_iter=10,
                     n_rollouts=25, n_steps=250, n_keep=0,
-                    kl_bound=0.05, discount=0.96,
-                    vreg=1e-32, preg=regs, cov0=8.0,
+                    kl_bound=0.1, discount=0.99,
+                    vreg=1e-16, preg=regs, cov0=8.0,
                     rslds=bw.rslds, priors=priors,
-                    degree=3)
+                    band=0.5 * np.array([0.5, 0.5, 4.0]), n_vfeat=75)
+
+
+    # dyn_prior = {"nu": 7, "psi": 1e-2}
+    # ctl_prior = {"nu": 3, "psi": 8.0}
+    # priors = [dyn_prior, ctl_prior]
+    # regs = np.array([np.finfo(float).tiny, 1e-16, 1e-12, 1e-12])
+    #
+    # env._max_episode_steps = 5000
+    # from rl.hyreps.hyreps_v1 import HyREPS
+    # hyreps = HyREPS(env, n_regions,
+    #                 n_samples=5000, n_iter=10,
+    #                 n_rollouts=25, n_steps=250, n_keep=0,
+    #                 kl_bound=0.05, discount=0.96,
+    #                 vreg=1e-32, preg=regs, cov0=8.0,
+    #                 rslds=bw.rslds, priors=priors,
+    #                 degree=3)
 
 
     # dyn_prior = {"nu": 7, "psi": 1e-2}
