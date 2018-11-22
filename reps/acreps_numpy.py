@@ -114,8 +114,8 @@ class Qfunction:
 class ACREPS:
 
     def __init__(self, env,
-                 n_samples, n_iter,
-                 n_rollouts, n_steps, n_keep,
+                 n_samples, n_keep,
+                 n_rollouts, n_steps,
                  kl_bound, discount, trace,
                  n_vfeat, n_pfeat,
                  vreg, preg, cov0,
@@ -127,11 +127,10 @@ class ACREPS:
         self.n_actions = self.env.action_space.shape[0]
 
         self.n_samples = n_samples
-        self.n_iter = n_iter
+        self.n_keep = n_keep
 
         self.n_rollouts = n_rollouts
         self.n_steps = n_steps
-        self.n_keep = n_keep
 
         self.kl_bound = kl_bound
         self.discount = discount
@@ -386,97 +385,95 @@ class ACREPS:
     def entropy(self):
         return np.log(np.sqrt(self.ctl.cov * 2.0 * np.pi * np.exp(1.0)))
 
-    def run(self, n_iter):
-        for it in range(n_iter):
-            _, eval = self.evaluate(self.n_rollouts, self.n_steps)
+    def run(self):
+        _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
-            self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
-            self.vfeatures = self.featurize(self.data)
+        self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
+        self.vfeatures = self.featurize(self.data)
 
-            # un = self.ctl.actions(self.data['xn'], False).reshape((-1, 1))
-            # self.qfeatures = self.qfunc.features(self.data['x'], self.data['u'])
-            # self.nqfeatures = self.qfunc.features(self.data['xn'], un)
+        # un = self.ctl.actions(self.data['xn'], False).reshape((-1, 1))
+        # self.qfeatures = self.qfunc.features(self.data['x'], self.data['u'])
+        # self.nqfeatures = self.qfunc.features(self.data['xn'], un)
 
-            # self.qfunc.theta, self.targets = self.lstd(self.nqfeatures, self.qfeatures,
-            #                                            self.discount, self.data)
+        # self.qfunc.theta, self.targets = self.lstd(self.nqfeatures, self.qfeatures,
+        #                                            self.discount, self.data)
 
-            # self.targets = self.mc(self.data, self.discount)
+        # self.targets = self.mc(self.data, self.discount)
 
-            self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
-                                    self.discount, self.trace)
+        self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
+                                self.discount, self.trace)
 
-            res = sc.optimize.minimize(self.dual,
-                                       np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
-                                       # np.hstack((1.0, self.vfunc.omega)),
-                                       method='SLSQP',
-                                       jac=grad(self.dual),
-                                       args=(
-                                           self.kl_bound,
-                                           self.vfeatures,
-                                           self.targets),
-                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+        res = sc.optimize.minimize(self.dual,
+                                   np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
+                                   # np.hstack((1.0, self.vfunc.omega)),
+                                   method='SLSQP',
+                                   jac=grad(self.dual),
+                                   args=(
+                                       self.kl_bound,
+                                       self.vfeatures,
+                                       self.targets),
+                                   bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
 
-            self.eta, self.vfunc.omega = res.x[0], res.x[1:]
+        self.eta, self.vfunc.omega = res.x[0], res.x[1:]
 
-            # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
-            # for _ in range(250):
-            #     res = sc.optimize.minimize(self.dual_eta,
-            #                                self.eta,
-            #                                method='SLSQP',
-            #                                jac=grad(self.dual_eta),
-            #                                args=(
-            #                                    self.vfunc.omega,
-            #                                    self.kl_bound,
-            #                                    self.vfeatures,
-            #                                    self.targets),
-            #                                bounds=((1e-8, 1e8),),
-            #                                options={'maxiter': 5})
-            #     # print(res)
-            #     #
-            #     # check = sc.optimize.check_grad(self.dual_eta,
-            #     #                                self.grad_eta, res.x,
-            #     #                                self.vfunc.omega,
-            #     #                                self.kl_bound,
-            #     #                                self.vfeatures,
-            #     #                                self.targets)
-            #     # print('Eta Error', check)
-            #
-            #     self.eta = res.x
-            #
-            #     res = sc.optimize.minimize(self.dual_omega,
-            #                                self.vfunc.omega,
-            #                                method='BFGS',
-            #                                jac=grad(self.dual_omega),
-            #                                args=(
-            #                                    self.eta,
-            #                                    self.vfeatures,
-            #                                    self.targets),
-            #                                options={'maxiter': 100})
-            #
-            #     # print(res)
-            #     #
-            #     # check = sc.optimize.check_grad(self.dual_omega,
-            #     #                                self.grad_omega, res.x,
-            #     #                                self.eta,
-            #     #                                self.vfeatures,
-            #     #                                self.targets)
-            #     # print('Omega Error', check)
-            #
-            #     self.vfunc.omega = res.x
+        # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
+        # for _ in range(250):
+        #     res = sc.optimize.minimize(self.dual_eta,
+        #                                self.eta,
+        #                                method='SLSQP',
+        #                                jac=grad(self.dual_eta),
+        #                                args=(
+        #                                    self.vfunc.omega,
+        #                                    self.kl_bound,
+        #                                    self.vfeatures,
+        #                                    self.targets),
+        #                                bounds=((1e-8, 1e8),),
+        #                                options={'maxiter': 5})
+        #     # print(res)
+        #     #
+        #     # check = sc.optimize.check_grad(self.dual_eta,
+        #     #                                self.grad_eta, res.x,
+        #     #                                self.vfunc.omega,
+        #     #                                self.kl_bound,
+        #     #                                self.vfeatures,
+        #     #                                self.targets)
+        #     # print('Eta Error', check)
+        #
+        #     self.eta = res.x
+        #
+        #     res = sc.optimize.minimize(self.dual_omega,
+        #                                self.vfunc.omega,
+        #                                method='BFGS',
+        #                                jac=grad(self.dual_omega),
+        #                                args=(
+        #                                    self.eta,
+        #                                    self.vfeatures,
+        #                                    self.targets),
+        #                                options={'maxiter': 100})
+        #
+        #     # print(res)
+        #     #
+        #     # check = sc.optimize.check_grad(self.dual_omega,
+        #     #                                self.grad_omega, res.x,
+        #     #                                self.eta,
+        #     #                                self.vfeatures,
+        #     #                                self.targets)
+        #     # print('Omega Error', check)
+        #
+        #     self.vfunc.omega = res.x
 
-            kl_samples = self.kl_samples()
+        kl_samples = self.kl_samples()
 
-            pi = self.ml_policy()
-            kl_params = self.kl_params(pi, self.ctl)
-            self.ctl = pi
+        pi = self.ml_policy()
+        kl_params = self.kl_params(pi, self.ctl)
+        self.ctl = pi
 
-            ent = self.entropy().squeeze()
+        ent = self.entropy().squeeze()
 
-            rwrd = np.sum(eval['r']) / self.n_rollouts
-            # rwrd = np.sum(self.data['r']) / np.sum(self.data['done'])
+        rwrd = np.sum(eval['r']) / self.n_rollouts
+        # rwrd = np.sum(self.data['r']) / np.sum(self.data['done'])
 
-            print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'kl_s={kl_samples:{5}.{4}}',
-                  f'kl_p={kl_params:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return rwrd, kl_samples, kl_params, ent
 
 
 if __name__ == "__main__":
@@ -490,12 +487,16 @@ if __name__ == "__main__":
     # env.seed(0)
 
     acreps = ACREPS(env=env,
-                    n_samples=5000, n_iter=15,
-                    n_rollouts=20, n_steps=250, n_keep=0,
+                    n_samples=5000, n_keep=0,
+                    n_rollouts=20, n_steps=250,
                     kl_bound=0.1, discount=0.98, trace=0.95,
                     n_vfeat=75, n_pfeat=75,
                     vreg=1e-12, preg=1e-12, cov0=16.0,
                     s_band=np.array([0.5, 0.5, 4.0]),
                     sa_band=np.array([0.5, 0.5, 4.0, 1.0]))
 
-    acreps.run(acreps.n_iter)
+    for it in range(15):
+        rwrd, kl_samples, kl_params, ent = acreps.run()
+
+        print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'kl_s={kl_samples:{5}.{4}}',
+              f'kl_p={kl_params:{5}.{4}}', f'ent={ent:{5}.{4}}')

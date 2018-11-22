@@ -59,8 +59,8 @@ if __name__ == "__main__":
     x, u = sample(env, opt_ctl, n_rollouts, n_steps, n_states, n_actions)
     w = np.ones((n_rollouts, n_steps))
 
-    dyn_prior = {"nu": 2 * n_states + 1, "psi": 1e-2}
-    ctl_prior = {"nu": 2 * n_actions + 1, "psi": 1e1}
+    dyn_prior = {"nu": n_states + 2, "psi": 1e-2}
+    ctl_prior = {"nu": n_actions + 2, "psi": 1e1}
     priors = [dyn_prior, ctl_prior]
 
     # do system identification

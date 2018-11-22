@@ -162,8 +162,8 @@ class Dual:
 class REPS:
 
     def __init__(self, env,
-                 n_samples, n_iter,
-                 n_rollouts, n_steps, n_keep,
+                 n_samples, n_keep,
+                 n_rollouts, n_steps,
                  kl_bound, discount,
                  n_vfeat, n_pfeat,
                  cov0, band):
@@ -174,11 +174,10 @@ class REPS:
         self.n_actions = self.env.action_space.shape[0]
 
         self.n_samples = n_samples
-        self.n_iter = n_iter
+        self.n_keep = n_keep
 
         self.n_rollouts = n_rollouts
         self.n_steps = n_steps
-        self.n_keep = n_keep
 
         self.kl_bound = kl_bound
         self.discount = discount
@@ -311,40 +310,38 @@ class REPS:
     def entropy(self):
         return torch.log(torch.exp(self.ctl.log_std) * np.sqrt(2.0 * np.pi * np.exp(1.0))).numpy().squeeze()
 
-    def run(self, n_iter):
-        for it in range(n_iter):
-            # eval = self.evaluate(self.n_rollouts, self.n_steps)
+    def run(self):
+        # eval = self.evaluate(self.n_rollouts, self.n_steps)
 
-            self.data = self.sample(self.n_samples, self.n_keep)
+        self.data = self.sample(self.n_samples, self.n_keep)
 
-            self.ivfeatures = torch.mean(self.dual.features(self.data['xi']),
-                                      dim=0, keepdim=True)
-            self.vfeatures = self.dual.features(self.data['x'])
-            self.nvfeatures = self.dual.features(self.data['xn'])
-            self.features = self.discount * self.nvfeatures - self.vfeatures +\
-                            (1.0 - self.discount) * self.ivfeatures
+        self.ivfeatures = torch.mean(self.dual.features(self.data['xi']),
+                                  dim=0, keepdim=True)
+        self.vfeatures = self.dual.features(self.data['x'])
+        self.nvfeatures = self.dual.features(self.data['xn'])
+        self.features = self.discount * self.nvfeatures - self.vfeatures +\
+                        (1.0 - self.discount) * self.ivfeatures
 
-            # reset parameters
-            self.dual.vfunc = RandomFourierNet(self.n_vfeat, 1)
-            self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
+        # reset parameters
+        self.dual.vfunc = RandomFourierNet(self.n_vfeat, 1)
+        self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
 
-            dual = self.dual.minimize(self.features, self.data['r'])
+        dual = self.dual.minimize(self.features, self.data['r'])
 
-            self.advantage = self.data['r'] + self.dual.values(self.features)
-            self.weights = torch.exp(torch.clamp((self.advantage - torch.max(self.advantage)) /
-                                                 self.dual.eta(), EXP_MIN, EXP_MAX))
-            kl = self.kl_samples()
+        self.advantage = self.data['r'] + self.dual.values(self.features)
+        self.weights = torch.exp(torch.clamp((self.advantage - torch.max(self.advantage)) /
+                                             self.dual.eta(), EXP_MIN, EXP_MAX))
+        kl = self.kl_samples()
 
-            self.pfeatures = self.ctl.features(self.data['x'])
-            ploss = self.ctl.minimize(self.data['u'], self.pfeatures, self.weights)
+        self.pfeatures = self.ctl.features(self.data['x'])
+        ploss = self.ctl.minimize(self.data['u'], self.pfeatures, self.weights)
 
-            ent = self.entropy()
+        ent = self.entropy()
 
-            # rwrd = torch.sum(eval['r']).numpy() / self.n_rollouts
-            rwrd = torch.sum(self.data['r']).numpy() / np.sum(self.data['done'])
+        # rwrd = torch.sum(eval['r']).numpy() / self.n_rollouts
+        rwrd = torch.sum(self.data['r']).numpy() / np.sum(self.data['done'])
 
-            print('it=', it, f'dual={dual:{5}.{4}}', f'ploss={ploss:{5}.{4}}',
-                  f'rwrd={rwrd:{5}.{4}}', f'kl={kl:{5}.{4}}', f'ent={ent:{5}.{4}}' )
+        return rwrd, dual, ploss, kl, ent
 
 
 if __name__ == "__main__":
@@ -363,10 +360,14 @@ if __name__ == "__main__":
     random.seed(0)
 
     reps = REPS(env=env,
-                n_samples=5000, n_iter=25,
-                n_rollouts=25, n_steps=200, n_keep=0,
+                n_samples=5000, n_keep=0,
+                n_rollouts=25, n_steps=200,
                 kl_bound=0.1, discount=0.99,
                 n_vfeat=75, n_pfeat=75,
                 cov0=4.0, band=np.array([0.5, 0.5, 4.0]))
 
-    reps.run(reps.n_iter)
+    for it in range(15):
+        rwrd, dual, ploss, kl, ent = reps.run()
+
+        print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'dual={dual:{5}.{4}}',
+              f'ploss={ploss:{5}.{4}}', f'kl={kl:{5}.{4}}', f'ent={ent:{5}.{4}}')
