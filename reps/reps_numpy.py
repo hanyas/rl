@@ -7,6 +7,9 @@ from autograd import grad, jacobian
 import scipy as sc
 from scipy import optimize
 from scipy import stats
+from scipy import special
+
+from sklearn.preprocessing import PolynomialFeatures
 
 import random
 import copy
@@ -49,19 +52,25 @@ class FourierFeatures:
 
 class Policy:
 
-    def __init__(self, n_states, n_actions, n_feat, band):
+    def __init__(self, n_states, n_actions, **kwargs):
         self.n_states = n_states
         self.n_actions = n_actions
 
-        self.band = band
-        self.n_feat = n_feat
-        self.basis = FourierFeatures(self.n_states, self.n_feat, self.band)
+        if 'band' in kwargs:
+            self.band = kwargs.get('band', False)
+            self.n_feat = kwargs.get('n_feat', False)
+            self.basis = FourierFeatures(self.n_states, self.n_feat, self.band)
+        else:
+            self.degree = kwargs.get('degree', False)
+            self.n_feat = int(
+                sc.special.comb(self.degree + self.n_states, self.degree))
+            self.basis = PolynomialFeatures(self.degree)
 
         self.K = 1e-8 * np.random.randn(self.n_actions, self.n_feat)
         self.cov = np.eye(n_actions)
 
     def features(self, x):
-        return self.basis.fit_transform(x)
+        return self.basis.fit_transform(x.reshape(-1, self.n_states)).squeeze()
 
     def actions(self, x, stoch):
         feat = self.features(x)
@@ -74,12 +83,18 @@ class Policy:
 
 class Vfunction:
 
-    def __init__(self, n_states, n_feat, band):
+    def __init__(self, n_states, **kwargs):
         self.n_states = n_states
 
-        self.band = band
-        self.n_feat = n_feat
-        self.basis = FourierFeatures(self.n_states, self.n_feat, self.band)
+        if 'band' in kwargs:
+            self.band = kwargs.get('band', False)
+            self.n_feat = kwargs.get('n_feat', False)
+            self.basis = FourierFeatures(self.n_states, self.n_feat, self.band)
+        else:
+            self.degree = kwargs.get('degree', False)
+            self.n_feat = int(
+                sc.special.comb(self.degree + self.n_states, self.degree))
+            self.basis = PolynomialFeatures(self.degree)
 
         self.omega = 1e-8 * np.random.randn(self.n_feat)
 
@@ -97,9 +112,8 @@ class REPS:
                  n_samples, n_keep,
                  n_rollouts, n_steps,
                  kl_bound, discount,
-                 n_vfeat, n_pfeat,
                  vreg, preg, cov0,
-                 band):
+                 **kwargs):
 
         self.env = env
 
@@ -115,22 +129,29 @@ class REPS:
         self.kl_bound = kl_bound
         self.discount = discount
 
-        self.n_vfeat = n_vfeat
-        self.n_pfeat = n_pfeat
-
         self.vreg = vreg
         self.preg = preg
 
-        self.band = band
+        if 'band' in kwargs:
+            self.band = kwargs.get('band', False)
 
-        self.vfunc = Vfunction(self.n_states, n_feat=self.n_vfeat,
-                               band=self.band)
+            self.n_vfeat = kwargs.get('n_vfeat', False)
+            self.n_pfeat = kwargs.get('n_pfeat', False)
 
-        self.ctl = Policy(self.n_states, self.n_actions, n_feat=self.n_pfeat,
-                          band=self.band)
+            self.vfunc = Vfunction(self.n_states, n_feat=self.n_vfeat, band=self.band)
+
+            self.ctl = Policy(self.n_states, self.n_actions, n_feat=self.n_pfeat, band=self.band)
+        else:
+            self.vdgr = kwargs.get('vdgr', False)
+            self.pdgr = kwargs.get('pdgr', False)
+
+            self.vfunc = Vfunction(self.n_states, degree=self.vdgr)
+            self.n_vfeat = self.vfunc.n_feat
+
+            self.ctl = Policy(self.n_states, self.n_actions, degree=self.pdgr)
+            self.n_pfeat = self.ctl.n_feat
 
         self.ctl.cov = cov0 * self.ctl.cov
-
         self.action_limit = self.env.action_space.high
 
         self.data = {}
@@ -442,8 +463,8 @@ if __name__ == "__main__":
                 n_samples=5000, n_keep=0,
                 n_rollouts=25, n_steps=250,
                 kl_bound=0.1, discount=0.98,
-                n_vfeat=75, n_pfeat=75,
                 vreg=1e-16, preg=1e-16, cov0=8.0,
+                n_vfeat=75, n_pfeat=75,
                 band=np.array([0.5, 0.5, 4.0]))
 
     for it in range(15):
@@ -451,3 +472,37 @@ if __name__ == "__main__":
 
         print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'kl_s={kl_samples:{5}.{4}}',
               f'kl_p={kl_params:{5}.{4}}', f'ent={ent:{5}.{4}}')
+
+
+    # # np.random.seed(0)
+    # env = gym.make('Linear-v0')
+    # env._max_episode_steps = 1000
+    # # env.seed(0)
+    #
+    # reps = REPS(env=env,
+    #             n_samples=1000, n_keep=0,
+    #             n_rollouts=25, n_steps=150,
+    #             kl_bound=0.05, discount=0.95,
+    #             vreg=1e-32, preg=1e-32, cov0=25.0,
+    #             vdgr=2, pdgr=1)
+    #
+    # for it in range(15):
+    #     rwrd, kl_samples, kl_params, ent = reps.run()
+    #
+    #     print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'kl_s={kl_samples:{5}.{4}}',
+    #           f'kl_p={kl_params:{5}.{4}}', f'ent={ent:{5}.{4}}')
+    #
+    #
+    # rollouts, _ = reps.evaluate(25, 250)
+    #
+    # import matplotlib.pyplot as plt
+    #
+    # lgnd = ['Position', 'Velocity']
+    # fig, axs = plt.subplots(nrows=2, ncols=1)
+    # for i, ax in enumerate(fig.axes):
+    #     ax.set_title(lgnd[i])
+    #
+    # for roll in rollouts:
+    #     axs[0].plot(roll['x'][:, 0])
+    #     axs[1].plot(roll['x'][:, 1])
+    # plt.show()

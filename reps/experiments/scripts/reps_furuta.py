@@ -43,11 +43,11 @@ class MyExperiment(ClusterWork):
         env.seed(self._seed)
 
         self.reps = REPS(env=env,
-                         n_samples=n_samples,  n_keep=n_keep,
+                         n_samples=n_samples, n_keep=n_keep,
                          n_rollouts=n_rollouts, n_steps=n_steps,
                          kl_bound=kl_bound, discount=discount,
-                         n_vfeat=n_vfeat, n_pfeat=n_pfeat,
                          vreg=vreg, preg=preg, cov0=cov0,
+                         n_vfeat=n_vfeat, n_pfeat=n_pfeat,
                          band=band)
 
     def iterate(self, config=None, rep=0, n=0):

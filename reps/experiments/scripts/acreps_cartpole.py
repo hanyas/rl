@@ -50,8 +50,8 @@ class MyExperiment(ClusterWork):
                              n_samples=n_samples, n_keep=n_keep,
                              n_rollouts=n_rollouts, n_steps=n_steps,
                              kl_bound=kl_bound, discount=discount, trace=trace,
-                             n_vfeat=n_vfeat, n_pfeat=n_pfeat,
                              vreg=vreg, preg=preg, cov0=cov0,
+                             n_vfeat=n_vfeat, n_pfeat=n_pfeat,
                              s_band=s_band, sa_band=sa_band)
 
     def iterate(self, config=None, rep=0, n=0):
