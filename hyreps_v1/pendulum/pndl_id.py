@@ -1,12 +1,7 @@
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
-import numpy as np
-
-import matplotlib.pyplot as plt
-import matplotlib._color_data as mcd
-
-import seaborn as sns
+import autograd.numpy as np
 
 import gym
 import lab
@@ -15,14 +10,17 @@ from rl.reps.reps_numpy import Policy
 from rl.reps.reps_numpy import FourierFeatures
 
 from rl.hyreps import BaumWelch
-from rl.hyreps.hyreps import HyREPS
+from rl.hyreps import HyREPS
 from rl.hyreps import cart_polar
 
 import pickle
-import copy
-from functools import partial
-
 from joblib import Parallel, delayed
+
+
+import matplotlib.pyplot as plt
+import matplotlib._color_data as mcd
+
+import seaborn as sns
 
 
 np.set_printoptions(precision=5, suppress=True)
@@ -64,11 +62,11 @@ def sample(env, ctl, n_rollouts, n_steps, n_states, n_actions):
 
 
 def baumWelchFunc(args):
-    x, u, w, n_regions, priors, regs, rslds = args
+    x, u, w, n_regions, priors, regs, rslds, update = args
     rollouts = x.shape[0]
     choice = np.random.choice(rollouts, size=int(0.8 * rollouts), replace=False)
     x, u, w = x[choice, ...], u[choice, ...], w[choice, ...]
-    bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds)
+    bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds, update)
     lklhd = bw.run(n_iter=100, save=False)
     return bw, lklhd
 
@@ -84,7 +82,7 @@ if __name__ == "__main__":
     n_actions = env.action_space.shape[0]
     n_regions = 5
 
-    file = open("reps_pndlv1_ctl.pickle", "rb")
+    file = open('reps_pndlv1_ctl.pickle', 'rb')
     opt_ctl = pickle.load(file)
     file.close()
     opt_ctl.cov = 0.5 * np.eye(n_actions)
@@ -92,14 +90,14 @@ if __name__ == "__main__":
     x, u = sample(env, opt_ctl, n_rollouts, n_steps, n_states, n_actions)
     w = np.ones((n_rollouts, n_steps))
 
-    dyn_prior = {"nu": 7, "psi": 1e-2}
-    ctl_prior = {"nu": 3, "psi": 0.5}
+    dyn_prior = {'nu': n_states + 2, 'psi': 1e-2}
+    ctl_prior = {'nu': n_actions + 2, 'psi': 0.5}
     priors = [dyn_prior, ctl_prior]
-    regs = np.array([np.finfo(np.float64).tiny, 1e-16, 1e-12, 1e-16])
+    regs = np.array([np.finfo(np.float64).tiny, 1e-16, 1e-16, 1e-16])
 
     # do id
-    n_jobs = 1
-    args = [(x, u, w, n_regions, priors, regs, None) for _ in range(n_jobs)]
+    n_jobs = 25
+    args = [(x, u, w, n_regions, priors, regs, None, [True, True]) for _ in range(n_jobs)]
     results = Parallel(n_jobs=n_jobs, verbose=0, backend='loky')(map(delayed(baumWelchFunc), args))
     bwl, lklhd = list(map(list, zip(*results)))
     bw = bwl[np.argmax(lklhd)]
@@ -122,7 +120,7 @@ if __name__ == "__main__":
     x = eval['x'].reshape((-1, hyreps.n_steps, hyreps.n_states))
     u = eval['u'].reshape((-1, hyreps.n_steps, hyreps.n_actions))
 
-    args = [(x, u, w, n_regions, priors, regs, bw.rslds) for _ in range(n_jobs)]
+    args = [(x, u, w, n_regions, priors, regs, bw.rslds, [False, True]) for _ in range(n_jobs)]
     results = Parallel(n_jobs=n_jobs, verbose=0, backend='loky')(map(delayed(baumWelchFunc), args))
     bwl, lklhd = list(map(list, zip(*results)))
     bw = bwl[np.argmax(lklhd)]

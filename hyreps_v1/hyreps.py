@@ -60,7 +60,7 @@ class Policy:
         self.cov = [np.eye(n_actions) for _ in range(self.n_regions)]
 
     def features(self, x):
-        return self.basis.fit_transform(x.reshape(1, -1)).squeeze()
+        return self.basis.fit_transform(x.reshape(-1, self.n_states)).squeeze()
 
     def actions(self, z, x, stoch):
         feat = self.features(x)
@@ -363,16 +363,16 @@ class HyREPS:
         w = np.reshape(w, (self.n_rollouts, self.n_steps))
 
         def baumWelchFunc(args):
-            x, u, w, n_regions, priors, regs, rslds = args
+            x, u, w, n_regions, priors, regs, rslds, update = args
             rollouts = x.shape[0]
             choice = np.random.choice(rollouts, size=int(0.8 * rollouts), replace=False)
             x, u, w = x[choice, ...], u[choice, ...], w[choice, ...]
-            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds)
+            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds, update)
             lklhd = bw.run(n_iter=100, save=False)
             return bw, lklhd
 
         n_jobs = 25
-        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds) for _ in range(n_jobs)]
+        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds, [False, True]) for _ in range(n_jobs)]
         results = Parallel(n_jobs=n_jobs, verbose=0)(map(delayed(baumWelchFunc), args))
         bwl, lklhd = list(map(list, zip(*results)))
         bw = bwl[np.argmax(lklhd)]

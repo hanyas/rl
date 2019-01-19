@@ -380,16 +380,16 @@ class HyREPS_V:
         w = np.reshape(w, (self.n_rollouts, self.n_steps))
 
         def baumWelchFunc(args):
-            x, u, w, n_regions, priors, regs, rslds = args
+            x, u, w, n_regions, priors, regs, rslds, update = args
             rollouts = x.shape[0]
             choice = np.random.choice(rollouts, size=int(0.8 * rollouts), replace=False)
             x, u, w = x[choice, ...], u[choice, ...], w[choice, ...]
-            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds)
+            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds, update)
             lklhd = bw.run(n_iter=100, save=False)
             return bw, lklhd
 
         n_jobs = 25
-        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds) for _ in range(n_jobs)]
+        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds, [False, True]) for _ in range(n_jobs)]
         results = Parallel(n_jobs=n_jobs, verbose=0)(map(delayed(baumWelchFunc), args))
         bwl, lklhd = list(map(list, zip(*results)))
         bw = bwl[np.argmax(lklhd)]
@@ -474,3 +474,43 @@ class HyREPS_V:
             # rwrd = np.sum(self.data['r']) / np.sum(self.data['done'])
 
             print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'kl_s={kl_samples:{5}.{4}}')
+
+
+if __name__ == "__main__":
+
+    import gym
+    import lab
+
+    # np.random.seed(0)
+    env = gym.make('Hybrid-v0')
+    env._max_episode_steps = 5000
+    # env.seed(0)
+
+    dyn_prior = {'nu': 4, 'psi': 1e-2}
+    ctl_prior = {'nu': 3, 'psi': 8.0}
+    priors = [dyn_prior, ctl_prior]
+    regs = np.array([np.finfo(float).tiny, 1e-16, 1e-16, 1e-16])
+
+    hybrd_rslds = env.unwrapped.rslds
+
+    hyreps = HyREPS_V(env, 2,
+                    n_samples=5000, n_iter=10,
+                    n_rollouts=25, n_steps=250, n_keep=0,
+                    kl_bound=0.05, discount=0.99,
+                    vreg=1e-6, preg=regs, cov0=8.0,
+                    rslds=hybrd_rslds, priors=priors,
+                    degree=3)
+
+    hyreps.run(5)
+
+    # import matplotlib.pyplot as plt
+    #
+    # lgnd = ['Position', 'Velocity']
+    # fig, axs = plt.subplots(nrows=2, ncols=1)
+    # for i, ax in enumerate(fig.axes):
+    #     ax.set_title(lgnd[i])
+    #
+    # for roll in rollouts:
+    #     axs[0].plot(roll['x'][:, 0])
+    #     axs[1].plot(roll['x'][:, 1])
+    # plt.show()

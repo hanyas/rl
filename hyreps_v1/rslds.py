@@ -55,12 +55,12 @@ class Policy:
 
     def mean(self, x):
         aux = np.concatenate((np.ones(x.shape[:-1] + (1, )), x), axis=-1)
-        return np.einsum('kh,...th->...tk', self.K, aux)
+        return np.einsum('kh,...h->...k', self.K, aux)
 
     def prob(self, x, u):
         err = u - self.mean(x)
         return self.const * np.exp(
-            -0.5 * np.einsum('...tk,kh,...th->...t', err, self.perc, err))
+            -0.5 * np.einsum('...k,kh,...h->...', err, self.perc, err))
 
 
 class LinearGaussian:
@@ -70,13 +70,15 @@ class LinearGaussian:
 
         self.reg = reg
 
-        self.cov = sc.stats.invwishart.rvs(prior["nu"],
-                                           prior["psi"] * np.eye(n_states))
+        self.cov = sc.stats.invwishart.rvs(prior['nu'],
+                                           prior['psi'] * np.eye(n_states))
 
         self.A = sc.stats.matrix_normal.rvs(mean=None, rowcov=self.cov,
                                             colcov=self.cov)
+
         self.B = sc.stats.matrix_normal.rvs(mean=None, rowcov=self.cov,
                                             colcov=self.cov)[:, [0]]
+
         self.C = sc.stats.matrix_normal.rvs(mean=None, rowcov=self.cov,
                                             colcov=self.cov)[:, 0]
 
@@ -94,12 +96,12 @@ class LinearGaussian:
         if all(v is None for v in [A, B, C]):
             A, B, C = self.A, self.B, self.C
 
-        return np.einsum('kh,...th->...tk', A, x) + np.einsum('kh,...th->...tk', B, u) + C
+        return np.einsum('kh,...h->...k', A, x) + np.einsum('kh,...h->...k', B, u) + C
 
     def prob(self, x, u):
         err = x[..., 1:, :] - self.mean(x[..., :-1, :], u[..., :-1, :])
         return self.const * np.exp(
-            -0.5 * np.einsum('...tk,kh,...th->...t', err, self.perc, err))
+            -0.5 * np.einsum('...k,kh,...h->...', err, self.perc, err))
 
 
 class MultiLogistic:
@@ -136,10 +138,12 @@ class MultiLogistic:
 
 
 class rSLDS:
-    def __init__(self, n_states, n_actions, n_regions, dyn_prior, ctl_prior):
+    def __init__(self, n_states, n_actions, n_regions, priors):
         self.n_states = n_states
         self.n_actions = n_actions
         self.n_regions = n_regions
+
+        dyn_prior, ctl_prior = priors[0], priors[1]
 
         self.init_state = sc.stats.multivariate_normal(
             mean=np.random.randn(self.n_states),
@@ -162,21 +166,27 @@ class rSLDS:
         alphan, _ = normalize(alphan + np.finfo(float).tiny, dim=(-1, ))
 
         zn = np.argmax(alphan, axis=-1)
-
         return zn, alphan
 
-    def evolve(self, z, x, u, alpha):
+    def evolve(self, x, u, alpha, max=False):
         x_next = np.array([dist.mean(x, u) for dist in self.linear_models])
-        xn = np.sum(alpha * x_next.T, axis=-1).T
+        if max:
+            xn = x_next[np.argmax(alpha)]
+        else:
+            xn = np.sum(alpha * x_next.T, axis=-1).T
         return xn
 
-    def act(self, z, x, alpha):
-        u = np.array([ctl.mean(x) for ctl in self.linear_policy])
-        return np.sum(alpha * u.T, axis=-1).T
+    def act(self, x, alpha, max=False):
+        tmp = np.array([ctl.mean(x) for ctl in self.linear_policy])
+        if max:
+            u = tmp[np.argmax(alpha)]
+        else:
+            u = np.sum(alpha * tmp.T, axis=-1).T
+        return u
 
     def step(self, z, x, u, alpha):
         # evolve mean
-        xn = self.evolve(z, x, u, alpha)
+        xn = self.evolve(x, u, alpha)
 
         # filter
         zn, alphan = self.filter(xn, alpha)
@@ -213,6 +223,7 @@ class rSLDS:
 
         pickle.dump(self.linear_models, file)
         pickle.dump(self.logistic_model, file)
+        pickle.dump(self.linear_policy, file)
 
         file.close()
 
@@ -228,6 +239,7 @@ class rSLDS:
 
         self.linear_models = pickle.load(file)
         self.logistic_model = pickle.load(file)
+        self.linear_policy = pickle.load(file)
 
         file.close()
 

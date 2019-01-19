@@ -372,16 +372,16 @@ class HyREPS_AC:
         w = np.reshape(w, (x.shape[0], x.shape[1]))
 
         def baumWelchFunc(args):
-            x, u, w, n_regions, priors, regs, rslds = args
+            x, u, w, n_regions, priors, regs, rslds, update = args
             rollouts = x.shape[0]
             choice = np.random.choice(rollouts, size=int(0.8 * rollouts), replace=False)
             x, u, w = x[choice, ...], u[choice, ...], w[choice, ...]
-            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds)
+            bw = BaumWelch(x, u, w, n_regions, priors, regs, rslds, update)
             lklhd = bw.run(n_iter=100, save=False)
             return bw, lklhd
 
         n_jobs = 25
-        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds) for _ in range(n_jobs)]
+        args = [(x, u, w, self.n_regions, self.priors, self.preg, self.rslds, [False, True]) for _ in range(n_jobs)]
         results = Parallel(n_jobs=n_jobs, verbose=0)(map(delayed(baumWelchFunc), args))
         bwl, lklhd = list(map(list, zip(*results)))
         bw = bwl[np.argmax(lklhd)]
