@@ -7,8 +7,8 @@ import numexpr as ne
 
 from sklearn.preprocessing import PolynomialFeatures
 
-from rl.hyreps_v1 import dlogistic
-from rl.hyreps_v1 import normalize
+from rl.hyreps_v0 import dlogistic
+from rl.hyreps_v0 import normalize
 
 import time
 import pickle
@@ -123,32 +123,34 @@ class LinearGaussian:
 
 class MultiLogistic:
 
-    def __init__(self, n_states, n_regions, **kwargs):
+    def __init__(self, n_states, n_actions, n_regions, **kwargs):
         self.n_states = n_states
+        self.n_actions = n_actions
         self.n_regions = n_regions
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.n_states, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.n_states + self.n_actions, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
             self.n_feat = int(
-                sc.special.comb(self.degree + self.n_states, self.degree))
+                sc.special.comb(self.degree + self.n_states + n_actions, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
         self.par = np.random.randn(self.n_regions,
                                    self.n_regions * self.n_feat)
 
-    def features(self, x):
-        feat = self.basis.fit_transform(x.reshape(-1, self.n_states))
-        return np.reshape(feat, x.shape[:-1] + (self.n_feat,))
+    def features(self, x, u):
+        xu = np.concatenate((x, u), axis=-1)
+        feat = self.basis.fit_transform(xu.reshape(-1, self.n_states + self.n_actions))
+        return np.reshape(feat, xu.shape[:-1] + (self.n_feat, ))
 
-    def transitions(self, x, par=None):
+    def transitions(self, x, u, par=None):
         if par is None:
             par = self.par
 
-        feat = self.features(x)
+        feat = self.features(x, u)
         trans = self.logistic(par.reshape((self.n_regions, self.n_regions, -1)), feat)
 
         return trans
@@ -181,6 +183,9 @@ class rSLDS:
 
         dyn_prior, ctl_prior = priors[0], priors[1]
 
+        alpha = np.ones(self.n_regions) / self.n_regions
+        self.init_region = sc.stats.multinomial(1, alpha)
+
         self.init_state = sc.stats.multivariate_normal(
             mean=np.random.randn(self.n_states),
             cov=sc.stats.invwishart.rvs(dyn_prior["nu"],
@@ -189,14 +194,14 @@ class rSLDS:
         self.linear_models = [LinearGaussian(self.n_states, dyn_prior) for _ in
                               range(n_regions)]
 
-        self.logistic_model = MultiLogistic(self.n_states,
+        self.logistic_model = MultiLogistic(self.n_states, self.n_actions,
                                             self.n_regions, degree=1)
 
         self.linear_ctls = [Policy(self.n_states, self.n_actions, ctl_prior)
-                            for _ in range(n_regions)]
+                              for _ in range(n_regions)]
 
-    def filter(self, xn, alpha, stoch=False):
-        trans = self.logistic_model.transitions(xn)
+    def filter(self, x, u, alpha, stoch=False):
+        trans = self.logistic_model.transitions(x, u)
 
         alphan = np.einsum('...mk,...m->...k', trans, alpha)
         alphan, _ = normalize(alphan + np.finfo(float).tiny, dim=(-1, ))
@@ -235,11 +240,11 @@ class rSLDS:
         return u
 
     def step(self, x, u, alpha, stoch=False):
-        # evolve mean
-        xn = self.evolve(x, u, alpha, stoch)
-
         # filter
-        zn, alphan = self.filter(xn, alpha)
+        zn, alphan = self.filter(x, u, alpha, stoch)
+
+        # evolve mean
+        xn = self.evolve(x, u, alphan, stoch)
 
         return zn, xn, alphan
 
@@ -254,9 +259,13 @@ class rSLDS:
         x[:, 0] = x0
 
         # init discrete region
-        p = np.ones(self.n_regions) / self.n_regions
-        z[:, 0], alpha[:, 0] = self.filter(x[:, 0], p)
+        alpha[:, 0] = self.init_region.p
+        if stoch:
+            z[:, 0] = np.argmax(sc.stats.multinomial(1, alpha[:, 0]).rvs())
+        else:
+            z[:, 0] = np.argmax(alpha[:, 0], axis=-1)
 
+        # simulate
         for t in range(1, n_steps):
             z[:, t], x[:, t], alpha[:, t] = self.step(x[:, t - 1], u[:, t - 1],
                                                       alpha[:, t - 1], stoch)
@@ -274,6 +283,8 @@ class rSLDS:
         pickle.dump(self.n_actions, file)
         pickle.dump(self.n_regions, file)
 
+        pickle.dump(self.init_region.p, file)
+
         pickle.dump(self.init_state.mean, file)
         pickle.dump(self.init_state.cov, file)
 
@@ -289,6 +300,8 @@ class rSLDS:
         self.n_states = pickle.load(file)
         self.n_actions = pickle.load(file)
         self.n_regions = pickle.load(file)
+
+        self.init_region.p = pickle.load(file)
 
         self.init_state.mean = pickle.load(file)
         self.init_state.cov = pickle.load(file)
@@ -315,4 +328,4 @@ if __name__ == "__main__":
     rslds = rSLDS(n_states, n_actions, n_regions, priors)
 
     prob = rslds.linear_models[0].prob(x, u)
-    trans = rslds.logistic_model.transitions(x)
+    trans = rslds.logistic_model.transitions(x, u)

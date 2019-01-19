@@ -6,8 +6,8 @@ from scipy.special import logit, logsumexp
 from sklearn.metrics import mean_squared_error
 from sklearn import linear_model
 
-from rl.hyreps_v1 import rSLDS
-from rl.hyreps_v1 import normalize
+from rl.hyreps_v0 import rSLDS
+from rl.hyreps_v0 import normalize
 
 import matplotlib.pyplot as plt
 
@@ -60,7 +60,7 @@ class BaumWelch:
         self.lgstc = None
         self.dyn = np.zeros((self.n_rollouts, self.n_steps, self.n_regions))
         self.ctl = np.zeros((self.n_rollouts, self.n_steps, self.n_regions))
-        self.feat = self.rslds.logistic_model.features(x)
+        self.feat = self.rslds.logistic_model.features(x, u)
 
     def lognorm(self, var):
         x = np.log(var + np.finfo(float).tiny)
@@ -73,8 +73,7 @@ class BaumWelch:
         alpha = np.empty((n_rollouts, n_steps, self.n_regions), dtype=np.float128)
         norm = np.empty((n_rollouts, n_steps))
 
-        p = np.ones(self.n_regions) / self.n_regions
-        alpha[:, 0, :] = np.einsum('nml,m->nl', lgstc[:, 0, :, :], p)
+        alpha[:, 0, :] = self.rslds.init_region.p
         alpha[:, 0, :], norm[:, 0] = normalize(alpha[:, 0, :] + self.msg_reg, dim=(1,))
 
         # alpha[:, 0, :] = alpha[:, 0, :] + self.msg_reg
@@ -82,7 +81,7 @@ class BaumWelch:
         # alpha[:, 0, :] = alpha[:, 0, :] / norm[:, 0, np.newaxis]
 
         for t in range(1, n_steps):
-            alpha[:, t, :] = np.einsum('nml,nm->nl', lgstc[:, t, :, :],
+            alpha[:, t, :] = np.einsum('nml,nm->nl', lgstc[:, t - 1, :, :],
                                        alpha[:, t - 1, :]) * dyn[:, t, :] * ctl[:, t, :]
             alpha[:, t, :], norm[:, t] = normalize(alpha[:, t, :] + self.msg_reg, dim=(1, ))
 
@@ -101,7 +100,7 @@ class BaumWelch:
         beta[:, -1, :] = np.ones((n_rollouts, self.n_regions)) / scale[:, -1, np.newaxis]
 
         for t in range(n_steps - 2, -1, -1):
-            beta[:, t, :] = np.einsum('nml,nl->nm', lgstc[:, t + 1, :, :],
+            beta[:, t, :] = np.einsum('nml,nl->nm', lgstc[:, t, :, :],
                                       (beta[:, t + 1, :] * dyn[:, t + 1, :] * ctl[:, t + 1, :]))
             beta[:, t, :] = beta[:, t, :] / scale[:, t, np.newaxis]
 
@@ -117,7 +116,7 @@ class BaumWelch:
         for t in range(n_steps - 1):
             aux = np.einsum('nm,nl->nml', alpha[:, t, :],
                             dyn[:, t + 1, :] * ctl[:, t + 1, :] * beta[:, t + 1, :])
-            zeta[:, t, :, :] = lgstc[:, t + 1, :, :] * aux
+            zeta[:, t, :, :] = lgstc[:, t, :, :] * aux
             zeta[:, t, :, :], _ = normalize(zeta[:, t, :, :] + self.msg_reg, dim=(2, 1))
 
             # zeta[:, t, :, :] = zeta[:, t, :, :] + self.msg_reg
@@ -143,8 +142,8 @@ class BaumWelch:
 
         x[:, 0] = xt[:, 0]
 
-        p = np.ones(self.n_regions) / self.n_regions
-        z[:, 0], alpha[:, 0] = self.rslds.filter(x[:, 0], p)
+        alpha[:, 0] = self.rslds.init_region.p
+        z[:, 0] = np.argmax(alpha[:, 0], axis=-1)
 
         for t in range(1, n_steps):
             u[:, t - 1] = self.rslds.act(x[:, t - 1], alpha[:, t - 1])
@@ -172,7 +171,7 @@ class BaumWelch:
             else:
                 self.ctl[:, :, i] = np.ones(self.u.shape[:-1])
 
-        self.lgstc = self.rslds.logistic_model.transitions(self.x)
+        self.lgstc = self.rslds.logistic_model.transitions(self.x, self.u)
 
         self.alpha, self.lik = self.forward(self.x, self.dyn, self.lgstc, self.ctl)
         self.beta = self.backward(self.x, self.lik, self.dyn, self.lgstc, self.ctl)
@@ -239,6 +238,8 @@ class BaumWelch:
                 break
             else:
                 last_liklhd = liklhd[-1]
+
+            self.rslds.init_region.p = np.mean(self.gamma[:, 0, :], axis=0, keepdims=False)
 
             # initial state distribution
             self.rslds.init_state.mean = np.mean(self.x[:, 0, :], axis=0)

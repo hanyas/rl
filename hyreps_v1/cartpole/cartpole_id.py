@@ -9,8 +9,8 @@ import lab
 from rl.reps.reps_numpy import Policy
 from rl.reps.reps_numpy import FourierFeatures
 
-from rl.hyreps import BaumWelch
-from rl.hyreps import HyREPS
+from rl.hyreps_v1 import BaumWelch
+from rl.hyreps_v1 import HyREPS
 
 import pickle
 from joblib import Parallel, delayed
