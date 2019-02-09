@@ -12,6 +12,9 @@ from sklearn.preprocessing import PolynomialFeatures
 
 import copy
 
+EXP_MAX = 700.0
+EXP_MIN = -700.0
+
 
 class Sphere:
 
@@ -134,7 +137,6 @@ class EREPS:
         self.dim_action =self.func.dim_action
 
         self.n_samples = n_samples
-
         self.kl_bound = kl_bound
 
         if 'cov0' in kwargs:
@@ -156,7 +158,7 @@ class EREPS:
 
     def weights(self, r, eta):
         adv = r - np.max(r)
-        w = np.exp(adv / eta)
+        w = np.exp(np.clip(adv / eta, EXP_MIN, EXP_MAX))
         return w, adv
 
     def dual(self, eta, eps, r):
@@ -170,8 +172,7 @@ class EREPS:
             np.sum(w * adv, axis=0) / (eta * np.sum(w, axis=0))
         return dg
 
-    def kl_samples(self):
-        w, _ = self.weights(self.data['r'], self.eta)
+    def kl_samples(self, w):
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
@@ -194,7 +195,7 @@ class EREPS:
         # pol = self.ctl.wml(self.data['x'], self.w)
         pol = self.ctl.wmap(self.data['x'], self.w, eps=self.kl_bound)
 
-        kls = self.kl_samples()
+        kls = self.kl_samples(self.w)
         kli = self.ctl.kli(pol)
         klm = self.ctl.klm(pol)
 
@@ -206,7 +207,7 @@ class EREPS:
 
 if __name__ == "__main__":
 
-    np.random.seed(1337)
+    # np.random.seed(1337)
 
     ereps = EREPS(func=Sphere(dim_action=10),
                   n_samples=10, kl_bound=0.1,

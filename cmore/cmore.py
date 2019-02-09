@@ -34,16 +34,16 @@ class Sphere:
 
 class Policy:
 
-    def __init__(self, dim_cntxt, dim_action, cov0, degree):
+    def __init__(self, dim_cntxt, dim_action, degree, cov0):
         self.dim_cntxt = dim_cntxt
         self.dim_action = dim_action
 
         self.degree = degree
         self.basis = PolynomialFeatures(self.degree, include_bias=False)
-        self.n_cfeat = int(sc.special.comb(self.degree + self.dim_cntxt, self.degree) - 1)
+        self.n_feat = int(sc.special.comb(self.degree + self.dim_cntxt, self.degree) - 1)
 
         self.b =  1e-8 * np.random.randn(self.dim_action, )
-        self.K = 1e-8 * np.random.randn(self.dim_action, self.n_cfeat)
+        self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
         self.cov = cov0 * np.eye(dim_action)
 
     def features(self, c):
@@ -144,7 +144,8 @@ class Model:
 class CMORE:
 
     def __init__(self, func, n_samples,
-                 kl_bound, ent_rate, **kwargs):
+                 kl_bound, ent_rate,
+                 cdgr, **kwargs):
 
         self.func = func
         self.dim_action = self.func.dim_action
@@ -155,21 +156,18 @@ class CMORE:
         self.kl_bound = kl_bound
         self.ent_rate = ent_rate
 
-        if 'degree' in kwargs:
-            self.degree = kwargs.get('degree', False)
-        else:
-            self.degree = 1
+        self.cdgr = cdgr
 
-        self.basis = PolynomialFeatures(self.degree, include_bias=False)
-        self.n_cfeat = int(sc.special.comb(self.degree + self.dim_cntxt, self.degree) - 1)
+        self.basis = PolynomialFeatures(self.cdgr, include_bias=False)
+        self.n_cfeat = int(sc.special.comb(self.cdgr + self.dim_cntxt, self.cdgr) - 1)
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
             self.ctl = Policy(self.dim_action, self.dim_cntxt,
-                              cov0, self.degree)
+                              self.cdgr, cov0)
         else:
             self.ctl = Policy(self.dim_action, self.dim_cntxt,
-                              100.0, self.degree)
+                              self.cdgr, 100.0)
 
         if 'h0' in kwargs:
             self.h0 = kwargs.get('h0', False)
@@ -307,7 +305,7 @@ if __name__ == "__main__":
     cmore = CMORE(func=Sphere(dim_cntxt=1, dim_action=1),
                   n_samples=1000,
                   kl_bound=0.05, ent_rate=0.99,
-                  cov0=100.0, h0=75.0, degree=1)
+                  cov0=100.0, h0=75.0, cdgr=1)
 
     for it in range(250):
         rwrd, kl, ent = cmore.run()

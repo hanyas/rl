@@ -313,8 +313,8 @@ class ACREPS:
 
         return data
 
-    def kl_samples(self):
-        w = torch.clamp(self.weights, 1e-75, np.inf)
+    def kl_samples(self, weights):
+        w = torch.clamp(weights, 1e-75, np.inf)
         w = w / torch.mean(w, dim=0)
         return torch.mean(w * torch.log(w), dim=0).numpy().squeeze()
 
@@ -338,7 +338,7 @@ class ACREPS:
         self.advantage = self.targets - self.dual.values(self.vfeatures)
         self.weights = torch.exp(torch.clamp((self.advantage - torch.max(self.advantage)) /
                                              self.dual.eta(), EXP_MIN, EXP_MAX))
-        kl = self.kl_samples()
+        kl = self.kl_samples(self.weights)
 
         self.pfeatures = self.ctl.features(self.data['x'])
         ploss = self.ctl.minimize(self.data['u'], self.pfeatures, self.weights)

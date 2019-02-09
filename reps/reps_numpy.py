@@ -392,8 +392,7 @@ class REPS:
         homega = 1.0 / eta * np.einsum('n,nk,nh->kh', w, tmp, tmp)
         return homega
 
-    def kl_samples(self):
-        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
+    def kl_samples(self, w):
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
@@ -480,7 +479,7 @@ class REPS:
         # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
         pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, self.kl_bound)
 
-        kls = self.kl_samples()
+        kls = self.kl_samples(self.w)
         kli = self.ctl.kli(pol, self.data['x'])
         klm = self.ctl.klm(pol, self.data['x'])
 

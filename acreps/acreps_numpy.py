@@ -447,8 +447,7 @@ class ACREPS:
         domega = domega + self.vreg * 2 * omega
         return domega
 
-    def kl_samples(self):
-        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
+    def kl_samples(self, w):
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
@@ -535,7 +534,7 @@ class ACREPS:
         # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
         pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, self.kl_bound)
 
-        kls = self.kl_samples()
+        kls = self.kl_samples(self.w)
         kli = self.ctl.kli(pol, self.data['x'])
         klm = self.ctl.klm(pol, self.data['x'])
 

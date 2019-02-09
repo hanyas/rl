@@ -269,6 +269,8 @@ class MORE:
 
 if __name__ == "__main__":
 
+    # np.random.seed(1337)
+
     more = MORE(func=Sphere(dim_action=2), n_samples=1000,
                 kl_bound=0.05, ent_rate=0.99,
                 cov0=100.0, h0=75.0)
