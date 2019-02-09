@@ -209,8 +209,8 @@ if __name__ == "__main__":
 
     # np.random.seed(1337)
 
-    ereps = EREPS(func=Sphere(dim_action=10),
-                  n_samples=10, kl_bound=0.1,
+    ereps = EREPS(func=Sphere(dim_action=5),
+                  n_samples=25, kl_bound=0.1,
                   cov0=100.0)
 
     # ereps = EREPS(func=Rosenbrock(dim_action=3),

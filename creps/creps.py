@@ -258,8 +258,8 @@ class CREPS:
         self.w, _, _ = self.weights(self.eta, self.vfunc.omega,
                                     self.data['r'], self.vfeatures)
 
-        pol = self.ctl.wml(self.data['c'], self.data['x'], self.w, self.preg)
-        # pol = self.ctl.wmap(self.data['c'], self.data['x'], self.w, eps=self.kl_bound)
+        # pol = self.ctl.wml(self.data['c'], self.data['x'], self.w, self.preg)
+        pol = self.ctl.wmap(self.data['c'], self.data['x'], self.w, eps=self.kl_bound)
 
         kls = self.kl_samples(self.w)
         kli = self.ctl.kli(pol, self.data['c'])
