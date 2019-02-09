@@ -10,7 +10,6 @@ from scipy import stats
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import Ridge
 
 import random
 import copy
@@ -111,39 +110,50 @@ class Policy:
     def entropy(self):
         return 0.5 * np.log(np.linalg.det(self.cov * 2.0 * np.pi * np.exp(1.0)))
 
-    def wml(self, x, u, w, preg, eta=np.array([0.0])):
+    def wml(self, x, u, w, preg):
         pol = copy.deepcopy(self)
 
         psi = self.features(x)
 
-        reg = Ridge(alpha=preg, fit_intercept=False)
-        reg.fit(psi, u, sample_weight=(w + eta))
-        pol.K = reg.coef_
-
-        # _inv = np.linalg.inv(psi.T @ np.diag(w + eta + preg) @ psi)
-        # pol.K = (_inv @ psi.T  @ (np.diag(w) @ u + eta * self.mean(x))).T
+        _inv = np.linalg.inv(psi.T @ np.diag(w) @ psi + preg * np.eye(psi.shape[1]))
+        pol.K = u.T @ np.diag(w) @ psi @ _inv
 
         std = u - pol.mean(x)
-        diff = self.mean(x) - pol.mean(x)
+        pol.cov = np.sum(np.einsum('nk,n,nh->nkh', std, w, std), axis=0) / np.sum(w)
 
+        return pol
+
+    def rwml(self, x, u, w, preg=0.0, eta=np.array([0.0])):
+        pol = copy.deepcopy(self)
+
+        psi = self.features(x)
+
+        _inv = np.linalg.inv(psi.T @ np.diag(w + eta) @ psi + preg * np.eye(psi.shape[1]))
+        pol.K = (u.T @ np.diag(w) + eta * self.mean(x).T) @ psi @ _inv
+
+        std = u - pol.mean(x)
         tmp = np.mean(np.einsum('nk,n,nh->nkh', std, w, std), axis=0)
-        aux = np.mean(np.einsum('nk,nh->nkh', diff, diff), axis=0)
 
-        pol.cov = (tmp + eta * self.cov + eta * aux) / (np.mean(w, axis=0) + eta)
+        diff = self.mean(x) - pol.mean(x)
+        aux = eta * np.mean(np.einsum('nk,nh->nkh', diff, diff), axis=0)
+
+        pol.cov = (tmp + aux + eta * self.cov) / (np.mean(w) + eta)
         return pol
 
     def dual(self, eta, x, u, w, eps):
-        pol = self.wml(x, u, w, preg=0.0, eta=eta)
+        pol = self.rwml(x, u, w, eta=eta)
         return np.mean(w * self.loglik(pol, x, u)) + eta * (eps - self.klm(pol, x))
 
-    def wmap(self, x, u, w, eps=np.array([0.05])):
+    def wmap(self, x, u, w, eps):
         res = sc.optimize.minimize(self.dual, np.array([1.0]),
                                    method='SLSQP',
                                    # jac=grad(self.dual),
                                    args=(x, u, w, eps),
-                                   bounds=((1e-8, 1e8),))
+                                   bounds=((1e-8, 1e8),),
+                                   options={'maxiter': 250,
+                                            'ftol': 1e-06})
         eta = res['x']
-        pol = self.wml(x, u, w, eta)
+        pol = self.rwml(x, u, w, eta=eta)
 
         return pol
 
@@ -468,7 +478,7 @@ class REPS:
         self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
 
         # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
-        pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, 0.5 * self.kl_bound)
+        pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, self.kl_bound)
 
         kls = self.kl_samples()
         kli = self.ctl.kli(pol, self.data['x'])
@@ -494,7 +504,7 @@ if __name__ == "__main__":
     env.seed(0)
 
     reps = REPS(env=env,
-                n_samples=5000, n_keep=0,
+                n_samples=3000, n_keep=0,
                 n_rollouts=25, n_steps=250,
                 kl_bound=0.1, discount=0.99,
                 vreg=1e-12, preg=1e-12, cov0=8.0,
