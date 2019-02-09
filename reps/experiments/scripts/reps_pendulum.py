@@ -1,7 +1,7 @@
 import numpy as np
 from cluster_work import ClusterWork
 
-from rl.reps.reps_numpy import REPS
+from rl.reps.reps_npy import REPS
 
 class MyExperiment(ClusterWork):
 
@@ -38,7 +38,7 @@ class MyExperiment(ClusterWork):
         import lab
 
         np.random.seed(self._seed)
-        env = gym.make('Pendulum-v1')
+        env = gym.make('Pendulum-v0')
         env._max_episode_steps = 5000
         env.seed(self._seed)
 
@@ -51,8 +51,12 @@ class MyExperiment(ClusterWork):
                          band=band)
 
     def iterate(self, config=None, rep=0, n=0):
-        rwrd, _, _, _ = self.reps.run()
-        return {'rwrd': rwrd}
+        rwrd, kls, kli, klm, ent = self.reps.run()
+
+        print(f'rwrd={rwrd:{5}.{4}}',
+              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
+              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return {}
 
 if __name__ == "__main__":
 

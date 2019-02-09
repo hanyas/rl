@@ -1,7 +1,7 @@
 import numpy as np
 from cluster_work import ClusterWork
 
-from rl.reps.acreps_numpy import ACREPS
+from rl.acreps.acreps_npy import ACREPS
 
 class MyExperiment(ClusterWork):
 
@@ -42,7 +42,7 @@ class MyExperiment(ClusterWork):
         import lab
 
         np.random.seed(self._seed)
-        env = gym.make('Cartpole-v0')
+        env = gym.make('Cartpole-v1')
         env._max_episode_steps = 500
         env.seed(self._seed)
 
@@ -55,7 +55,11 @@ class MyExperiment(ClusterWork):
                              s_band=s_band, sa_band=sa_band)
 
     def iterate(self, config=None, rep=0, n=0):
-        self.acreps.run()
+        rwrd, kls, kli, klm, ent = self.acreps.run()
+
+        print(f'rwrd={rwrd:{5}.{4}}',
+              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
+              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
         return {}
 
 if __name__ == "__main__":
