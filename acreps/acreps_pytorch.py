@@ -2,8 +2,6 @@ import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 import numpy as np
-import scipy as sc
-from scipy import stats
 
 import torch
 import torch.nn as nn
@@ -53,7 +51,7 @@ class Policy:
 
     def __init__(self, dim_state, dim_action,
                  cov, band, n_feat,
-                 n_epochs=200, n_batch=64,
+                 n_epochs=100, n_batch=64,
                  lr=1e-3):
 
         self.dim_state = dim_state
@@ -115,6 +113,7 @@ class Dual:
 
     def __init__(self, dim_state, epsi,
                  n_feat, band,
+                 discount, trace,
                  n_epochs=100, n_batch=64,
                  lr=1e-3):
 
@@ -124,6 +123,9 @@ class Dual:
         self.band = band
         self.n_feat = n_feat
         self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+
+        self.discount = discount
+        self.trace = trace
 
         self.vfunc = RandomFourierNet(self.n_feat, 1)
         self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
@@ -146,29 +148,46 @@ class Dual:
     def eta(self):
         return torch.exp(self.kappa)
 
-    def loss(self, feat, r):
-        adv = r + self.vfunc(feat)
-        w = torch.exp(torch.clamp((adv - torch.max(adv)) / torch.exp(self.kappa), EXP_MIN, EXP_MAX))
-        g = torch.max(adv) + torch.exp(self.kappa) * self.epsi + torch.exp(self.kappa) * torch.log(torch.mean(w))
-        return g
+    @torch.no_grad()
+    def gae(self, feat, data):
+        values = self.values(feat)
+        adv = torch.zeros_like(values)
 
-    def minimize(self, feat, r):
+        for rev_k, v in enumerate(reversed(values)):
+            k = len(values) - rev_k - 1
+            if data["done"][k]:
+                adv[k] = data["r"][k] - values[k]
+            else:
+                adv[k] = data["r"][k] + self.discount * values[k + 1] - values[k] + \
+                         self.discount * self.trace * adv[k + 1]
+
+        return (values + adv)
+
+
+    def loss(self, feat, mfeat, targets):
+        adv = targets - self.vfunc(feat)
+        w = torch.exp(torch.clamp((adv - torch.max(adv)) / torch.exp(self.kappa), EXP_MIN, EXP_MAX))
+        g = self.vfunc(mfeat) + torch.max(adv) +\
+            torch.exp(self.kappa) * self.epsi + torch.exp(self.kappa) * torch.log(torch.mean(w))
+        return g.squeeze()
+
+    def minimize(self, feat, mfeat, targets):
         loss = None
         for epoch in range(self.n_epochs):
             for batch in batches(self.n_batch, feat.shape[0]):
-                loss = self.loss(feat[batch], r[batch])
+                loss = self.loss(feat[batch], mfeat, targets[batch])
                 self.opt.zero_grad()
                 loss.backward()
                 self.opt.step()
         return loss
 
 
-class REPS:
+class ACREPS:
 
     def __init__(self, env,
                  n_samples, n_keep,
                  n_rollouts, n_steps,
-                 kl_bound, discount,
+                 kl_bound, discount, trace,
                  n_vfeat, n_pfeat,
                  cov0, band):
 
@@ -185,95 +204,84 @@ class REPS:
 
         self.kl_bound = kl_bound
         self.discount = discount
+        self.trace = trace
 
         self.n_vfeat = n_vfeat
         self.n_pfeat = n_pfeat
 
         self.band = band
 
-        self.dual = Dual(self.dim_state, epsi=self.kl_bound,
-                         n_feat=self.n_vfeat, band=self.band)
+        self.dual = Dual(self.dim_state, n_feat=self.n_vfeat, band=self.band,
+                         discount=self.discount, trace=self.trace, epsi=self.kl_bound)
 
         self.ctl = Policy(self.dim_state, self.dim_action, cov=cov0, n_feat=self.n_pfeat,
                           band=self.band)
 
         self.action_limit = self.env.action_space.high
 
-        self.data = {'xi': np.empty((0, self.dim_state)),
-                     'x': np.empty((0, self.dim_state)),
+        self.data = {'x': np.empty((0, self.dim_state)),
                      'u': np.empty((0, self.dim_action)),
                      'xn': np.empty((0, self.dim_state)),
                      'r': np.empty((0, 1)),
                      'done': np.empty((0,), np.int64)}
 
         self.vfeatures = None
-        self.ivfeatures = None
-        self.nvfeatures = None
-        self.features = None
+        self.mvfeatures = None
+
+        self.targets = None
 
         self.advantage = None
         self.weights = None
 
         self.pfeatures = None
 
-    def sample(self, n_samples, n_keep=0, reset=True, stoch=True, render=False):
+    def sample(self, n_samples, n_keep=0, stoch=True, render=False):
         if n_keep==0:
-            data = {'xi': np.empty((0, self.dim_state)),
-                    'x': np.empty((0, self.dim_state)),
+            data = {'x': np.empty((0, self.dim_state)),
                     'u': np.empty((0, self.dim_action)),
                     'xn': np.empty((0, self.dim_state)),
                     'r': np.empty((0, 1)),
                     'done': np.empty((0,), np.int64)}
         else:
-            data = {'xi': np.empty((0, self.dim_state)),
+            data = {
                     'x': self.data['x'][-n_keep:, :],
                     'u': self.data['u'][-n_keep:, :],
                     'xn': self.data['xn'][-n_keep:, :],
                     'r': self.data['r'][-n_keep:, :],
                     'done': self.data['done'][-n_keep:]}
 
-        coin = sc.stats.binom(1, 1.0 - self.discount)
-
         n = 0
         while True:
             x = self.env.reset()
 
-            data['xi'] = np.vstack((data['xi'], x))
-            data['done'] = np.hstack((data['done'], False))
-
             while True:
-                if reset and coin.rvs():
+                u = self.ctl.actions(x, stoch)
+
+                data['x'] = np.vstack((data['x'], x))
+                data['u'] = np.vstack((data['u'], u))
+
+                x, r, done, _ = self.env.step(
+                    np.clip(u, - self.action_limit, self.action_limit))
+                if render:
+                    self.env.render()
+
+                data['xn'] = np.vstack((data['xn'], x))
+                data['r'] = np.vstack((data['r'], r))
+                data['done'] = np.hstack((data['done'], done))
+
+                n = n + 1
+                if n >= n_samples:
                     data['done'][-1] = True
+
+                    data['x'] = torch.from_numpy(np.stack(data['x'])).float()
+                    data['u'] = torch.from_numpy(np.stack(data['u'])).float()
+                    data['xn'] = torch.from_numpy(np.stack(data['xn'])).float()
+                    data['r'] = torch.from_numpy(np.stack(data['r'])).float()
+
+                    return data
+
+                if done:
                     break
-                else:
-                    u = self.ctl.actions(x, stoch)
-
-                    data['x'] = np.vstack((data['x'], x))
-                    data['u'] = np.vstack((data['u'], u))
-
-                    x, r, done, _ = self.env.step(
-                        np.clip(u, - self.action_limit, self.action_limit))
-                    if render:
-                        self.env.render()
-
-                    data['xn'] = np.vstack((data['xn'], x))
-                    data['r'] = np.vstack((data['r'], r))
-                    data['done'] = np.hstack((data['done'], done))
-
-                    n = n + 1
-                    if n >= n_samples:
-                        data['done'][-1] = True
-
-                        data['xi'] = torch.from_numpy(np.stack(data['xi'])).float()
-                        data['x'] = torch.from_numpy(np.stack(data['x'])).float()
-                        data['u'] = torch.from_numpy(np.stack(data['u'])).float()
-                        data['xn'] = torch.from_numpy(np.stack(data['xn'])).float()
-                        data['r'] = torch.from_numpy(np.stack(data['r'])).float()
-
-                        return data
-
-                    if done:
-                        break
 
     def evaluate(self, n_rollouts, n_steps, render=False):
         data = {'x': np.empty((0, self.dim_state)),
@@ -313,22 +321,21 @@ class REPS:
     def run(self):
         # eval = self.evaluate(self.n_rollouts, self.n_steps)
 
-        self.data = self.sample(self.n_samples, self.n_keep)
+        self.data = self.sample(self.n_samples)
 
-        self.ivfeatures = torch.mean(self.dual.features(self.data['xi']),
-                                  dim=0, keepdim=True)
         self.vfeatures = self.dual.features(self.data['x'])
-        self.nvfeatures = self.dual.features(self.data['xn'])
-        self.features = self.discount * self.nvfeatures - self.vfeatures +\
-                        (1.0 - self.discount) * self.ivfeatures
+        self.mvfeatures = torch.mean(self.vfeatures, dim=0)
+
+        self.targets = self.dual.gae(self.vfeatures, self.data)
 
         # reset parameters
         self.dual.vfunc = RandomFourierNet(self.n_vfeat, 1)
         self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
 
-        dual = self.dual.minimize(self.features, self.data['r'])
+        dual = self.dual.minimize(self.vfeatures, self.mvfeatures,
+                                  self.targets)
 
-        self.advantage = self.data['r'] + self.dual.values(self.features)
+        self.advantage = self.targets - self.dual.values(self.vfeatures)
         self.weights = torch.exp(torch.clamp((self.advantage - torch.max(self.advantage)) /
                                              self.dual.eta(), EXP_MIN, EXP_MAX))
         kl = self.kl_samples()
@@ -353,21 +360,21 @@ if __name__ == "__main__":
 
     np.random.seed(0)
     env = gym.make('Pendulum-v0')
-    env._max_episode_steps = 5000
+    env._max_episode_steps = 500
     env.seed(0)
 
     torch.manual_seed(0)
     random.seed(0)
 
-    reps = REPS(env=env,
-                n_samples=5000, n_keep=0,
-                n_rollouts=25, n_steps=200,
-                kl_bound=0.1, discount=0.99,
-                n_vfeat=75, n_pfeat=75,
-                cov0=4.0, band=np.array([0.5, 0.5, 4.0]))
+    acreps = ACREPS(env=env,
+                    n_samples=5000, n_keep=0,
+                    n_rollouts=25, n_steps=200,
+                    kl_bound=0.1, discount=0.98, trace=0.95,
+                    n_vfeat=75, n_pfeat=75,
+                    cov0=4.0, band=np.array([0.5, 0.5, 4.0]))
 
     for it in range(15):
-        rwrd, dual, ploss, kl, ent = reps.run()
+        rwrd, dual, ploss, kl, ent = acreps.run()
 
         print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'dual={dual:{5}.{4}}',
               f'ploss={ploss:{5}.{4}}', f'kl={kl:{5}.{4}}', f'ent={ent:{5}.{4}}')

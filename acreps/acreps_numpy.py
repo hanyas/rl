@@ -88,7 +88,7 @@ class Policy:
         mu, cov = pi.mean(x), pi.cov
         c = mu.shape[-1] * np.log(2.0 * np.pi)
 
-        ans = - 0.5 * (np.einsum('nk,kh,nh->n', u - mu, np.linalg.inv(cov), u - mu) +
+        ans = - 0.5 * (np.einsum('nk,kh,nh->n', mu - u, np.linalg.inv(cov), mu - u) +
                        np.log(np.linalg.det(cov)) + c)
         return ans
 
@@ -173,12 +173,38 @@ class Vfunction:
         return np.dot(feat, self.omega)
 
 
-class REPS:
+class Qfunction:
+
+    def __init__(self, dim_state, dim_action, **kwargs):
+        self.dim_state = dim_state
+        self.dim_action = dim_action
+
+        if 'band' in kwargs:
+            self.band = kwargs.get('band', False)
+            self.n_feat = kwargs.get('n_feat', False)
+            self.basis = FourierFeatures(self.dim_state + self.dim_action, self.n_feat, self.band)
+        else:
+            self.degree = kwargs.get('degree', False)
+            self.n_feat = int(
+                sc.special.comb(self.degree + (self.dim_state + self.dim_action), self.degree))
+            self.basis = PolynomialFeatures(self.degree)
+
+        self.theta = 1e-8 * np.random.randn(self.n_feat)
+
+    def features(self, x, a):
+        return self.basis.fit_transform(np.concatenate((x, a), axis=-1))
+
+    def values(self, x, a):
+        feat = self.features(x, a)
+        return np.dot(feat, self.theta)
+
+
+class ACREPS:
 
     def __init__(self, env,
                  n_samples, n_keep,
                  n_rollouts, n_steps,
-                 kl_bound, discount,
+                 kl_bound, discount, trace,
                  vreg, preg, cov0,
                  **kwargs):
 
@@ -195,25 +221,31 @@ class REPS:
 
         self.kl_bound = kl_bound
         self.discount = discount
+        self.trace = trace
 
         self.vreg = vreg
         self.preg = preg
 
-        if 'band' in kwargs:
-            self.band = kwargs.get('band', False)
+        if 's_band' in kwargs:
+            self.s_band = kwargs.get('s_band', False)
+            self.sa_band = kwargs.get('sa_band', False)
 
             self.n_vfeat = kwargs.get('n_vfeat', False)
             self.n_pfeat = kwargs.get('n_pfeat', False)
 
-            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat, band=self.band)
+            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat, band=self.s_band)
 
-            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat, band=self.band)
+            self.qfunc = Qfunction(self.dim_state, self.dim_action, n_feat=self.n_vfeat, band=self.sa_band)
+
+            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat, band=self.s_band)
         else:
             self.vdgr = kwargs.get('vdgr', False)
             self.pdgr = kwargs.get('pdgr', False)
 
             self.vfunc = Vfunction(self.dim_state, degree=self.vdgr)
             self.n_vfeat = self.vfunc.n_feat
+
+            self.qfunc = Qfunction(self.dim_state, self.dim_action, degree=self.vdgr)
 
             self.ctl = Policy(self.dim_state, self.dim_action, degree=self.pdgr)
             self.n_pfeat = self.ctl.n_feat
@@ -224,23 +256,24 @@ class REPS:
         self.data = {}
         self.rollouts = []
 
-        self.features = None
+        self.vfeatures = None
+        self.qfeatures = None
+        self.nqfeatures = None
+
+        self.targets = None
         self.w = None
 
         self.eta = np.array([1.0])
 
-    def sample(self, n_samples, n_keep=0, reset=True, stoch=True, render=False):
+    def sample(self, n_samples, n_keep=0, stoch=True, render=False):
         if len(self.rollouts) >= n_keep:
             rollouts = random.sample(self.rollouts, n_keep)
         else:
             rollouts = []
 
-        coin = sc.stats.binom(1, 1.0 - self.discount)
-
         n = 0
         while True:
-            roll = {'xi': np.empty((0, self.dim_state)),
-                    'x': np.empty((0, self.dim_state)),
+            roll = {'x': np.empty((0, self.dim_state)),
                     'u': np.empty((0, self.dim_action)),
                     'xn': np.empty((0, self.dim_state)),
                     'r': np.empty((0,)),
@@ -250,39 +283,32 @@ class REPS:
 
             x = self.env.reset()
 
-            rollouts[-1]['xi'] = np.vstack((rollouts[-1]['xi'], x))
-            rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], False))
-
             while True:
                 u = self.ctl.actions(x, stoch)
 
-                if reset and coin.rvs():
+                rollouts[-1]['x'] = np.vstack((rollouts[-1]['x'], x))
+                rollouts[-1]['u'] = np.vstack((rollouts[-1]['u'], u))
+
+                x, r, done, _ = self.env.step(
+                    np.clip(u, - self.action_limit, self.action_limit))
+                if render:
+                    self.env.render()
+
+                rollouts[-1]['xn'] = np.vstack((rollouts[-1]['xn'], x))
+                rollouts[-1]['r'] = np.hstack((rollouts[-1]['r'], r))
+                rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], done))
+
+                n = n + 1
+                if n >= n_samples:
                     rollouts[-1]['done'][-1] = True
+
+                    data = merge_dicts(*rollouts)
+                    data['u'] = np.reshape(data['u'], (-1, self.dim_action))
+
+                    return rollouts, data
+
+                if done:
                     break
-                else:
-                    rollouts[-1]['x'] = np.vstack((rollouts[-1]['x'], x))
-                    rollouts[-1]['u'] = np.vstack((rollouts[-1]['u'], u))
-
-                    x, r, done, _ = self.env.step(
-                        np.clip(u, - self.action_limit, self.action_limit))
-                    if render:
-                        self.env.render()
-
-                    rollouts[-1]['xn'] = np.vstack((rollouts[-1]['xn'], x))
-                    rollouts[-1]['r'] = np.hstack((rollouts[-1]['r'], r))
-                    rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], done))
-
-                    n = n + 1
-                    if n >= n_samples:
-                        rollouts[-1]['done'][-1] = True
-
-                        data = merge_dicts(*rollouts)
-                        data['u'] = np.reshape(data['u'], (-1, self.dim_action))
-
-                        return rollouts, data
-
-                    if done:
-                        break
 
     def evaluate(self, n_rollouts, n_steps, stoch=False, render=False):
         rollouts = []
@@ -317,73 +343,102 @@ class REPS:
 
         return rollouts, data
 
-    def featurize(self, data):
-        ivfeatures = np.mean(self.vfunc.features(data['xi']),
-                                  axis=0, keepdims=True)
-        vfeatures = self.vfunc.features(data['x'])
-        nvfeatures = self.vfunc.features(data['xn'])
-        features = self.discount * nvfeatures - vfeatures + \
-                        (1.0 - self.discount) * ivfeatures
-        return features
+    def lstd(self, phin, phi, discount, data):
+        A = phi.T @ (phi - discount * phin)
+        b = np.sum(phi * data['r'][:, np.newaxis], axis=0).T
 
-    def weights(self, eta, omega, features, rwrd):
-        adv = rwrd + np.dot(features, omega)
+        I = np.eye(phi.shape[1])
+
+        C = np.linalg.solve(phi.T @ phi + 1e-8 * I, phi.T).T
+        X = C @ (A + 1e-8 * I)
+        y = C @ b
+
+        theta = np.linalg.solve(X.T @ X + 1e-6 * I, X.T @ y)
+
+        return theta, np.dot(phi, theta)
+
+    def gae(self, data, phi, omega, discount, trace):
+        values = np.dot(phi, omega)
+        adv = np.zeros_like(values)
+
+        for rev_k, v in enumerate(reversed(values)):
+            k = len(values) - rev_k - 1
+            if data['done'][k]:
+                adv[k] = data['r'][k] - values[k]
+            else:
+                adv[k] = data['r'][k] + discount * values[k + 1] - values[k] +\
+                         discount * trace * adv[k + 1]
+
+        targets = adv + values
+        return targets
+
+    def mc(self, data, discount):
+        rewards = data['r']
+        targets = np.zeros_like(rewards)
+
+        for rev_k, v in enumerate(reversed(rewards)):
+            k = len(rewards) - rev_k - 1
+            if data['done'][k]:
+                targets[k] = rewards[k]
+            else:
+                targets[k] = rewards[k] + discount * rewards[k + 1]
+        return targets
+
+    def featurize(self, data):
+        vfeatures = self.vfunc.features(data['x'])
+        mvfeatures = np.mean(vfeatures, axis=0, keepdims=True)
+        return vfeatures - mvfeatures
+
+    def weights(self, eta, omega, features, targets):
+        adv = targets - np.dot(features, omega)
         delta = adv - np.max(adv)
         w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
         return w, delta, np.max(adv)
 
-    def dual(self, var, epsilon, phi, r):
+    def dual(self, var, epsilon, phi, targets):
         eta, omega = var[0], var[1:]
-        w, _, max_adv = self.weights(eta, omega, phi, r)
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
-        g = g + self.vreg * np.sum(omega ** 2)
+        g = g + self.vreg * (omega.T @ omega)
         return g
 
-    def grad(self, var, epsilon, phi, r):
+    def grad(self, var, epsilon, phi, targets):
         eta, omega = var[0], var[1:]
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
+        w, delta, max_adv = self.weights(eta, omega, phi, targets)
 
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
 
-        domega = np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
+        domega = - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
 
         return np.hstack((deta, domega))
 
-    def dual_eta(self, eta, omega, epsilon, phi, r):
-        w, _, max_adv = self.weights(eta, omega, phi, r)
+    def dual_eta(self, eta, omega, epsilon, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
         return g
 
-    def grad_eta(self, eta, omega, epsilon, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
+    def grad_eta(self, eta, omega, epsilon, phi, targets):
+        w, delta, max_adv = self.weights(eta, omega, phi, targets)
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
         return deta
 
-    def dual_omega(self, omega, eta, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
+    def dual_omega(self, omega, eta, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = max_adv + eta * np.log(np.mean(w, axis=0))
         g = g + self.vreg * np.sum(omega ** 2)
         return g
 
-    def grad_omega(self, omega, eta, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
-        domega = np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
+    def grad_omega(self, omega, eta, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
+        domega = - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
         return domega
 
-    def hess_omega(self, omega, eta, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
-        w = w / np.sum(w, axis=0)
-        aux = np.sum(w[:, np.newaxis] * phi, axis=0)
-        tmp = phi - aux
-        homega = 1.0 / eta * np.einsum('n,nk,nh->kh', w, tmp, tmp)
-        return homega
-
     def kl_samples(self):
-        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
@@ -392,7 +447,19 @@ class REPS:
         _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
         self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
-        self.features = self.featurize(self.data)
+        self.vfeatures = self.featurize(self.data)
+
+        # un = self.ctl.actions(self.data['xn'], False).reshape((-1, 1))
+        # self.qfeatures = self.qfunc.features(self.data['x'], self.data['u'])
+        # self.nqfeatures = self.qfunc.features(self.data['xn'], un)
+
+        # self.qfunc.theta, self.targets = self.lstd(self.nqfeatures, self.qfeatures,
+        #                                            self.discount, self.data)
+
+        # self.targets = self.mc(self.data, self.discount)
+
+        self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
+                                self.discount, self.trace)
 
         res = sc.optimize.minimize(self.dual,
                                    np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
@@ -401,8 +468,8 @@ class REPS:
                                    jac=grad(self.dual),
                                    args=(
                                        self.kl_bound,
-                                       self.features,
-                                       self.data['r']),
+                                       self.vfeatures,
+                                       self.targets),
                                    bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
 
         self.eta, self.vfunc.omega = res.x[0], res.x[1:]
@@ -414,21 +481,20 @@ class REPS:
         #                                method='SLSQP',
         #                                jac=grad(self.dual_eta),
         #                                args=(
-        #                                     self.vfunc.omega,
-        #                                     self.kl_bound,
-        #                                     self.features,
-        #                                     self.data['r']),
+        #                                    self.vfunc.omega,
+        #                                    self.kl_bound,
+        #                                    self.vfeatures,
+        #                                    self.targets),
         #                                bounds=((1e-8, 1e8),),
         #                                options={'maxiter': 5})
         #     # print(res)
         #     #
         #     # check = sc.optimize.check_grad(self.dual_eta,
-        #     #                                self.grad_eta,
-        #     #                                res.x,
+        #     #                                self.grad_eta, res.x,
         #     #                                self.vfunc.omega,
         #     #                                self.kl_bound,
-        #     #                                self.features,
-        #     #                                self.data['r'])
+        #     #                                self.vfeatures,
+        #     #                                self.targets)
         #     # print('Eta Error', check)
         #
         #     self.eta = res.x
@@ -439,33 +505,22 @@ class REPS:
         #                                jac=grad(self.dual_omega),
         #                                args=(
         #                                    self.eta,
-        #                                    self.features,
-        #                                    self.data['r']),
-        #                                options={'maxiter': 250})
+        #                                    self.vfeatures,
+        #                                    self.targets),
+        #                                options={'maxiter': 100})
         #
-        #     # res = sc.optimize.minimize(self.dual_omega,
-        #     #                            self.vfunc.omega,
-        #     #                            method='trust-exact',
-        #     #                            jac=grad(self.dual_omega),
-        #     #                            hess=jacobian(grad(self.dual_omega)),
-        #     #                            args=(
-        #     #                                self.eta,
-        #     #                                self.features,
-        #     #                                self.data['r']))
-        #     #
-        #     # # print(res)
+        #     # print(res)
         #     #
         #     # check = sc.optimize.check_grad(self.dual_omega,
-        #     #                                self.grad_omega,
-        #     #                                res.x,
+        #     #                                self.grad_omega, res.x,
         #     #                                self.eta,
-        #     #                                self.features,
-        #     #                                self.data['r'])
+        #     #                                self.vfeatures,
+        #     #                                self.targets)
         #     # print('Omega Error', check)
         #
         #     self.vfunc.omega = res.x
 
-        self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
+        self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
 
         # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
         pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, 0.5 * self.kl_bound)
@@ -488,21 +543,22 @@ if __name__ == "__main__":
     import gym
     import lab
 
-    np.random.seed(0)
+    # np.random.seed(0)
     env = gym.make('Pendulum-v0')
-    env._max_episode_steps = 5000
-    env.seed(0)
+    env._max_episode_steps = 500
+    # env.seed(0)
 
-    reps = REPS(env=env,
-                n_samples=5000, n_keep=0,
-                n_rollouts=25, n_steps=250,
-                kl_bound=0.1, discount=0.99,
-                vreg=1e-12, preg=1e-12, cov0=8.0,
-                n_vfeat=75, n_pfeat=75,
-                band=np.array([0.5, 0.5, 4.0]))
+    acreps = ACREPS(env=env,
+                    n_samples=5000, n_keep=0,
+                    n_rollouts=20, n_steps=250,
+                    kl_bound=0.1, discount=0.98, trace=0.95,
+                    vreg=1e-12, preg=1e-12, cov0=16.0,
+                    n_vfeat=75, n_pfeat=75,
+                    s_band=np.array([0.5, 0.5, 4.0]),
+                    sa_band=np.array([0.5, 0.5, 4.0, 1.0]))
 
     for it in range(15):
-        rwrd, kls, kli, klm, ent = reps.run()
+        rwrd, kls, kli, klm, ent = acreps.run()
 
         print('it=', it, f'rwrd={rwrd:{5}.{4}}',
               f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
@@ -511,18 +567,18 @@ if __name__ == "__main__":
 
     # # np.random.seed(0)
     # env = gym.make('Linear-v0')
-    # env._max_episode_steps = 5000
+    # env._max_episode_steps = 500
     # # env.seed(0)
     #
-    # reps = REPS(env=env,
-    #             n_samples=2500, n_keep=0,
-    #             n_rollouts=25, n_steps=100,
-    #             kl_bound=0.05, discount=0.975,
-    #             vreg=1e-16, preg=1e-16, cov0=5.0,
-    #             vdgr=2, pdgr=1)
+    # acreps = ACREPS(env=env,
+    #                 n_samples=2500, n_keep=0,
+    #                 n_rollouts=25, n_steps=150,
+    #                 kl_bound=0.1, discount=0.95, trace=0.95,
+    #                 vreg=1e-32, preg=1e-32, cov0=25.0,
+    #                 vdgr=2, pdgr=1)
     #
-    # for it in range(10):
-    #     rwrd, kls, kli, klm, ent = reps.run()
+    # for it in range(15):
+    #     rwrd, kls, kli, klm, ent = acreps.run()
     #
     #     print('it=', it, f'rwrd={rwrd:{5}.{4}}',
     #           f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
