@@ -123,7 +123,7 @@ class Policy:
 
         return pol
 
-    def rwml(self, x, u, w, preg=0.0, eta=np.array([0.0])):
+    def rwml(self, x, u, w, preg, eta=np.array([0.0])):
         pol = copy.deepcopy(self)
 
         psi = self.features(x)
@@ -140,20 +140,20 @@ class Policy:
         pol.cov = (tmp + aux + eta * self.cov) / (np.mean(w) + eta)
         return pol
 
-    def dual(self, eta, x, u, w, eps):
-        pol = self.rwml(x, u, w, eta=eta)
+    def dual(self, eta, x, u, w, preg, eps):
+        pol = self.rwml(x, u, w, preg=preg, eta=eta)
         return np.mean(w * self.loglik(pol, x, u)) + eta * (eps - self.klm(pol, x))
 
-    def wmap(self, x, u, w, eps):
+    def wmap(self, x, u, w, preg, eps):
         res = sc.optimize.minimize(self.dual, np.array([1.0]),
                                    method='SLSQP',
                                    # jac=grad(self.dual),
-                                   args=(x, u, w, eps),
+                                   args=(x, u, w, preg, eps),
                                    bounds=((1e-8, 1e8),),
                                    options={'maxiter': 250,
                                             'ftol': 1e-06})
         eta = res['x']
-        pol = self.rwml(x, u, w, eta=eta)
+        pol = self.rwml(x, u, w, preg=preg, eta=eta)
 
         return pol
 
@@ -532,7 +532,7 @@ class ACREPS:
         self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
 
         # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
-        pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, self.kl_bound)
+        pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
 
         kls = self.kl_samples(self.w)
         kli = self.ctl.kli(pol, self.data['x'])
@@ -558,7 +558,7 @@ if __name__ == "__main__":
     # env.seed(0)
 
     acreps = ACREPS(env=env,
-                    n_samples=5000, n_keep=0,
+                    n_samples=3000, n_keep=0,
                     n_rollouts=20, n_steps=250,
                     kl_bound=0.1, discount=0.98, trace=0.95,
                     vreg=1e-12, preg=1e-12, cov0=16.0,
@@ -572,7 +572,6 @@ if __name__ == "__main__":
         print('it=', it, f'rwrd={rwrd:{5}.{4}}',
               f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
               f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
-
 
     # # np.random.seed(0)
     # env = gym.make('Linear-v0')
