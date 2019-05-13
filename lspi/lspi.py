@@ -92,7 +92,6 @@ class Qfunction:
             self.n_feat = int(sc.special.comb(self.degree + self.dim_state,
                                               self.degree))
 
-
         self.omega = 1e-3 * np.random.randn(self.n_actions * self.n_feat)
 
     def features(self, x):
@@ -149,7 +148,7 @@ class LSPI:
     def act(self, x, eps):
         if eps >= np.random.rand():
             return np.random.choice(self.actions.flatten(),
-                                    size=(self.dim_action))
+                                    size=(self.dim_action, ))
         else:
             return self.maxq(x)
 
@@ -193,7 +192,7 @@ class LSPI:
 
         for n in range(self.data['u'].shape[0]):
             u = self.data['u'][n, :]
-            iu = np.where(u==self.actions)[0]
+            iu = np.where(u == self.actions)[0]
             phi[n, :] = PHI[iu, n, :]
 
         PHIn = self.qfunc.features(self.data['xn'])

@@ -1,7 +1,3 @@
-import os
-
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
 import autograd.numpy as np
 from autograd import grad
 
@@ -10,7 +6,7 @@ from scipy import optimize
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import  Ridge
+from sklearn.linear_model import Ridge
 
 import copy
 
@@ -178,9 +174,7 @@ class MORE:
         self.data = {}
 
     def sample(self, n_samples):
-        data = {}
-
-        data['x'] = self.ctl.action(n_samples)
+        data = {'x': self.ctl.action(n_samples)}
         data['r'] = self.func.eval(data['x'])
 
         return data
