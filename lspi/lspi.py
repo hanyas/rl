@@ -7,11 +7,6 @@ from scipy import stats
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import PolynomialFeatures
 
-import matplotlib.pyplot as plt
-
-
-np.set_printoptions(precision=5)
-
 
 class FourierFeatures:
 
@@ -237,6 +232,10 @@ class LSPI:
 if __name__ == "__main__":
     import gym
     import lab
+
+    import matplotlib.pyplot as plt
+
+    np.set_printoptions(precision=5)
 
     env = gym.make('CartPole-v3')
     env._max_episode_steps = 10000

@@ -310,8 +310,7 @@ class REPS:
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(
-                    np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
                 if render:
                     self.env.render()
 
