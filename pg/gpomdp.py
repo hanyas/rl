@@ -7,11 +7,11 @@ from sklearn.preprocessing import PolynomialFeatures
 
 class FourierFeatures:
 
-    def __init__(self, dim_state, n_feat, band):
-        self.dim_state = dim_state
+    def __init__(self, d_state, n_feat, band):
+        self.d_state = d_state
         self.n_feat = n_feat
 
-        self.freq = np.random.multivariate_normal(mean=np.zeros(self.dim_state),
+        self.freq = np.random.multivariate_normal(mean=np.zeros(self.d_state),
                                                   cov=np.diag(1.0 / band),
                                                   size=self.n_feat)
         self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
@@ -23,24 +23,24 @@ class FourierFeatures:
 
 class Policy:
 
-    def __init__(self, dim_state, dim_action, **kwargs):
-        self.dim_state = dim_state
-        self.dim_action = dim_action
+    def __init__(self, d_state, d_action, **kwargs):
+        self.d_state = d_state
+        self.d_action = d_action
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.d_state, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree)) - 1
+            self.n_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
             self.basis = PolynomialFeatures(self.degree, include_bias=False)
 
-        self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
-        self.cov = np.eye(dim_action)
+        self.K = 1e-8 * np.random.randn(self.d_action, self.n_feat)
+        self.cov = np.eye(d_action)
 
     def features(self, x):
-        return self.basis.fit_transform(x.reshape(-1, self.dim_state)).squeeze()
+        return self.basis.fit_transform(x.reshape(-1, self.d_state)).squeeze()
 
     def mean(self, x):
         feat = self.features(x)
@@ -151,13 +151,13 @@ if __name__ == "__main__":
     env._max_episode_steps = 100
 
     gpomdp = GPOMDP(env, n_episodes=25, n_steps=100,
-                       discount=0.995, alpha=1e-6)
+                       discount=0.995, alpha=1e-5)
 
     for it in range(10):
         ret = gpomdp.run()
         print('it=', it, f'ret={ret:{5}.{4}}')
 
-    rollouts = gpomdp.sample(25, 250, stoch=False)
+    rollouts = gpomdp.sample(25, 100, stoch=False)
 
     fig = plt.figure()
     for r in rollouts:
