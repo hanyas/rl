@@ -54,10 +54,10 @@ class Policy:
             return mean
 
     def grad(self, x, u):
-        return np.einsum('nl,ll,nk->nk', u - self.mean(x), np.linalg.inv(self.cov), self.features(x))
+        return np.einsum('nh,hh,nk->nk', u - self.mean(x), np.linalg.inv(self.cov), self.features(x))
 
 
-class GPOMDP:
+class REINFORCE:
 
     def __init__(self, env, n_episodes, n_steps, discount, alpha):
         self.env = env
@@ -101,14 +101,14 @@ class GPOMDP:
 
         return rollouts
 
-    def baseline(self, rewards, gradient):
-        _norm = np.zeros((self.n_steps, self.ctl.n_feat))
+    def baseline(self, returns, gradient):
+        _norm = np.zeros((self.ctl.n_feat, ))
         for g in gradient:
-            _norm += np.cumsum(g**2, axis=0)
+            _norm += np.sum(g, axis=0)**2
 
-        _b = np.zeros((self.n_steps, self.ctl.n_feat))
-        for r, g in zip(rewards, gradient):
-            _b += np.cumsum(g**2, axis=0) * r[:, np.newaxis] / _norm
+        _b = np.zeros((self.ctl.n_feat, ))
+        for r, g in zip(returns, gradient):
+            _b += np.sum(g, axis=0)**2 * r / _norm
 
         return _b
 
@@ -117,28 +117,24 @@ class GPOMDP:
 
         _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((self.n_steps,))[:-1])))
 
-        _reward = []
+        _return = []
         for roll in self.rollouts:
-            _reward.append(_disc * roll['r'])
+            _return.append(np.sum(_disc * roll['r']))
 
         _grad = []
         for roll in self.rollouts:
             _g = self.ctl.grad(roll['x'], roll['u'])
             _grad.append(_g)
 
-        _baseline = self.baseline(_reward, _grad)
+        _baseline = self.baseline(_return, _grad)
 
         _wgrad = np.zeros((self.ctl.n_feat, ))
-        for r, g in zip(_reward, _grad):
-            _wgrad += np.sum(np.cumsum(g, axis=0) * (r[:, np.newaxis] - _baseline), axis=0) / len(_reward)
+        for r, g in zip(_return, _grad):
+            _wgrad += np.sum(g, axis=0) * (r - _baseline) / len(_return)
 
         self.ctl.K += self.alpha * _wgrad
 
-        ret = 0.0
-        for r in _reward:
-            ret += r.sum() / len(_reward)
-
-        return ret
+        return np.mean(_return)
 
 
 if __name__ == "__main__":
@@ -150,14 +146,14 @@ if __name__ == "__main__":
     env = gym.make('LQR-v0')
     env._max_episode_steps = 100
 
-    gpomdp = GPOMDP(env, n_episodes=25, n_steps=100,
-                       discount=0.995, alpha=1e-5)
+    reinforce = REINFORCE(env, n_episodes=25, n_steps=100,
+                          discount=0.995, alpha=1e-5)
 
-    for it in range(10):
-        ret = gpomdp.run()
+    for it in range(15):
+        ret = reinforce.run()
         print('it=', it, f'ret={ret:{5}.{4}}')
 
-    rollouts = gpomdp.sample(25, 100, stoch=False)
+    rollouts = reinforce.sample(25, 100, stoch=False)
 
     fig = plt.figure()
     for r in rollouts:

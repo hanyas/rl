@@ -131,7 +131,7 @@ if __name__ == "__main__":
     fdpg = FDPG(env, n_episodes=50, n_steps=100,
                 discount=0.995, alpha=1e-4, cov=0.01)
 
-    for it in range(10):
+    for it in range(15):
         ret = fdpg.run()
         print('it=', it, f'ret={ret:{5}.{4}}')
 

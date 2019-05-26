@@ -133,7 +133,7 @@ if __name__ == "__main__":
     fdpg = PGPE(env, n_episodes=100, n_steps=100,
                 discount=0.995, alpha=1e-6, beta=1e-8, cov=.025)
 
-    for it in range(10):
+    for it in range(15):
         ret = fdpg.run()
         print('it=', it, f'ret={ret:{5}.{4}}')
 
