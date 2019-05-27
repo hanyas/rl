@@ -2,10 +2,23 @@ import numpy as np
 
 import scipy as sc
 from scipy import special
-from scipy import stats
 
-from sklearn.linear_model import Ridge
 from sklearn.preprocessing import PolynomialFeatures
+
+
+def merge(*dicts):
+    d = {}
+    for dict in dicts:
+        for key in dict:
+            try:
+                d[key].append(dict[key])
+            except KeyError:
+                d[key] = [dict[key]]
+
+    for key in d:
+        d[key] = np.concatenate(d[key]).squeeze()
+
+    return d
 
 
 class FourierFeatures:
@@ -59,21 +72,19 @@ class RadialFeatures:
 
 class Qfunction:
 
-    def __init__(self, d_state, d_action, n_actions, qdict):
+    def __init__(self, d_state, d_action, qdict):
         self.d_state = d_state
         self.d_action = d_action
 
-        self.n_actions = n_actions
-
         self.type = qdict['type']
 
-        if self.type == 'Fourier':
+        if self.type == 'fourier':
             self.n_feat = qdict['n_feat']
             self.band = qdict['band']
             self.basis = FourierFeatures(self.d_state,
                                          self.n_feat, self.band)
 
-        elif self.type == 'RBF':
+        elif self.type == 'rbf':
             self.n_centers = qdict['n_centers']
             self.ranges = qdict['ranges']
             self.width = qdict['width']
@@ -81,19 +92,19 @@ class Qfunction:
                                         self.ranges, self.width)
             self.n_feat = self.basis.n_feat
 
-        elif self.type == 'Poly':
+        elif self.type == 'poly':
             self.degree = qdict['degree']
             self.basis = PolynomialFeatures(self.degree)
             self.n_feat = int(sc.special.comb(self.degree + self.d_state,
                                               self.degree))
 
-        self.omega = 1e-3 * np.random.randn(self.n_actions * self.n_feat)
+        self.omega = 1e-3 * np.random.randn(self.d_action * self.n_feat)
 
     def features(self, x):
         x = np.reshape(x, (-1, self.d_state))
 
-        phi = np.zeros((self.n_actions, x.shape[0], self.n_actions * self.n_feat))
-        for n in range(self.n_actions):
+        phi = np.zeros((self.d_action, x.shape[0], self.d_action * self.n_feat))
+        for n in range(self.d_action):
             idx = np.ix_(range(n, n + 1),
                          range(x.shape[0]),
                          range(n * self.n_feat, n * self.n_feat + self.n_feat))
@@ -105,101 +116,139 @@ class Qfunction:
         return np.dot(feat, self.omega)
 
 
+class Policy:
+
+    def __init__(self, d_state, d_action, pdict):
+        self.d_state = d_state
+        self.d_action = d_action
+
+        self.type = pdict['type']
+
+        if 'beta' in pdict:
+            self.beta = pdict['beta']
+        if 'eps' in pdict:
+            self.eps = pdict['eps']
+        if 'weights' in pdict:
+            self.weights = pdict['weights']
+
+    def action(self, qfunc, x):
+        qvals = qfunc.values(x).flatten()
+
+        if self.type == 'softmax':
+            pmf = np.exp(np.clip(qvals / self.beta, -700, 700))
+            return np.random.choice(self.d_action, p=pmf/np.sum(pmf))
+        elif self.type == 'greedy':
+            if self.eps >= np.random.rand():
+                return np.random.choice(self.d_action)
+            else:
+                return np.argmax(qvals)
+        else:
+            return np.random.choice(self.d_action, p=self.weights)
+
+
 class LSPI:
 
     def __init__(self, env, n_samples, n_actions,
-                 discount, eps, alpha, beta, qdict):
+                 discount, alpha, beta, qdict, pdict):
 
         self.env = env
 
         self.d_state = self.env.observation_space.shape[0]
-        self.d_action = 1  # self.env.action_space.shape[0]
+        self.d_action = n_actions  # self.env.action_space.shape[0]
 
         self.n_samples = n_samples
-
-        self.n_actions = n_actions
-        self.actions = np.asarray(list(range(self.n_actions)))
-
         self.discount = discount
-        self.eps = eps
 
+        self.ctl = Policy(self.d_state, self.d_action, pdict)
+
+        # lstd regression
         self.alpha = alpha
         self.beta = beta
 
         self.qdict = qdict
-        self.qfunc = Qfunction(self.d_state, self.d_action,
-                               self.n_actions, self.qdict)
+        self.qfunc = Qfunction(self.d_state, self.d_action, self.qdict)
 
         self.n_feat = self.qfunc.n_feat
 
-        self.data = {}
+        self.data = None
+        self.rollouts = None
 
-    def maxq(self, x):
-        Q = self.qfunc.values(x)
-        return self.actions[np.argmax(Q)]
-
-    def act(self, x, eps):
-        if eps >= np.random.rand():
-            return np.random.choice(self.actions)
-        else:
-            return self.maxq(x)
-
-    def sample(self, n_samples, eps):
-        data = {'x': np.empty((0, self.d_state)),
-                'u': np.empty((0, self.d_action), np.int64),
-                'xn': np.empty((0, self.d_state)),
-                'done': np.empty((0, )),
-                'r': np.empty((0,))}
+    def sample(self, n_samples):
+        rollouts = []
 
         n = 0
-        while n < n_samples:
+        while True:
+            roll = {'x': np.empty((0, self.d_state)),
+                    'u': np.empty((0, ), np.int64),
+                    'xn': np.empty((0, self.d_state)),
+                    'done': np.empty((0,), np.int64),
+                    'r': np.empty((0,))}
+
             x = self.env.reset()
 
-            while True:
-                u = self.act(x, eps)
+            done = False
+            while not done:
+                u = self.ctl.action(self.qfunc, x)
 
-                data['x'] = np.vstack((data['x'], x))
-                data['u'] = np.vstack((data['u'], u))
+                roll['x'] = np.vstack((roll['x'], x))
+                roll['u'] = np.hstack((roll['u'], u))
 
                 x, r, done, _ = self.env.step(u)
-
-                data['xn'] = np.vstack((data['xn'], x))
-                data['r'] = np.hstack((data['r'], r))
-                data['done'] = np.hstack((data['done'], done))
+                roll['xn'] = np.vstack((roll['xn'], x))
+                roll['done'] = np.hstack((roll['done'], done))
+                roll['r'] = np.hstack((roll['r'], r))
 
                 n = n + 1
                 if n >= n_samples:
-                    return data
+                    roll['done'][-1] = True
+                    rollouts.append(roll)
 
-                if done:
-                    break
+                    data = merge(*rollouts)
+                    return rollouts, data
 
-    def lstd(self, data, phi, nphi):
-        _A = np.einsum('nk,nh->kh', phi, (phi - self.discount * nphi))
-        _b = np.einsum('nk,n->k', phi, data['r'])
+            rollouts.append(roll)
 
-        _I = np.eye(phi.shape[1])
+    def lstd(self, data, phi, nphi, type='batch'):
+        if type == 'batch':
+            _A = np.einsum('nk,nh->kh', phi, (phi - self.discount * nphi))
+            _b = np.einsum('nk,n->k', phi, data['r'])
 
-        _C = np.linalg.solve(phi.T.dot(phi) + self.alpha * _I, phi.T).T
-        _X = _C.dot(_A + self.alpha * _I)
-        _y = _C.dot(_b)
+            _I = np.eye(phi.shape[1])
 
-        omega = np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y))
+            _C = np.linalg.solve(phi.T.dot(phi) + self.alpha * _I, phi.T).T
+            _X = _C.dot(_A + self.alpha * _I)
+            _y = _C.dot(_b)
 
-        # clf = Ridge(alpha=self.alpha, fit_intercept=False)
-        # clf.fit(_A, _b)
-        # omega = clf.coef_
+            return np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y))
 
-        return omega
+            # from sklearn.linear_model import Ridge
+            # clf = Ridge(alpha=self.alpha, fit_intercept=False)
+            # clf.fit(_A, _b)
+            # return clf.coef_
+
+        elif type == 'iter':
+            _K = phi.shape[1]
+            _N = phi.shape[0]
+
+            _B = np.eye(_K) * self.alpha
+            _b = np.zeros((_K, ))
+
+            for n in range(_N):
+                _denom = 1.0 + (phi[n, :] - self.discount * nphi[n, :]).T @ _B @ phi[n, :]
+                _B -= _B @ np.outer(phi[n, :], (phi[n, :] - self.discount * nphi[n, :])) @ _B / _denom
+
+                _b += phi[n, :] * data['r'][n]
+
+            return _B @ _b
 
     def run(self, n_iter):
-        self.data = self.sample(self.n_samples, 1.0)
+        self.rollouts, self.data = self.sample(self.n_samples)
 
         feat = self.qfunc.features(self.data['x'])
         phi = np.zeros((feat.shape[1], feat.shape[2]))
 
         for n in range(self.data['u'].shape[0]):
-            u = self.data['u'][n, :]
+            u = self.data['u'][n]
             phi[n, :] = feat[u, n, :]
 
         nfeat = self.qfunc.features(self.data['xn'])
@@ -207,11 +256,11 @@ class LSPI:
 
         for it in range(n_iter):
             # actions under new policy
-            self.data['un'] = np.empty((0, self.d_action), np.int64)
+            self.data['un'] = np.zeros((self.n_samples, ), np.int64)
 
             for n in range(self.data['xn'].shape[0]):
-                un = self.act(self.data['xn'][n, :], self.eps)
-                self.data['un'] = np.vstack((self.data['un'], un))
+                un = self.ctl.action(self.qfunc, self.data['xn'][n, :])
+                self.data['un'][n] = un
                 nphi[n, :] = nfeat[un, n, :]
 
             _omega = self.qfunc.omega.copy()
@@ -232,20 +281,29 @@ if __name__ == "__main__":
 
     np.set_printoptions(precision=5)
 
+    # from gym.envs.registration import register
+    # register(id='Lagoudakis-v0',
+    #          entry_point='rl.lspi.cartpole:CartPole',
+    #          max_episode_steps=1000)
+    #
+    # env = gym.make('Lagoudakis-v0')
+
     env = gym.make('CartPole-v0')
     env._max_episode_steps = 10000
 
     lspi = LSPI(env=env, n_samples=10000, n_actions=2,
-                discount=0.95, eps=0.1,
-                alpha=1e-8, beta=1e-6,
-                qdict={'type': 'Poly',
-                       'degree': 2}
+                discount=0.9, alpha=1e-8, beta=1e-12,
+                qdict={'type': 'poly',
+                       'degree': 2},
+                pdict={'type': 'greedy',
+                       'eps': 1.0},
                 )
 
     lspi.run(10)
 
-    # test policy
-    data = lspi.sample(n_samples=10000, eps=0.0)
+    # test deterministic policy
+    lspi.ctl.eps = 0.0
+    _, data = lspi.sample(n_samples=1000)
 
     plt.subplot(411)
     plt.plot(data['x'][:, 2])
@@ -260,8 +318,8 @@ if __name__ == "__main__":
     plt.ylabel('Action')
 
     plt.subplot(414)
-    plt.plot(data['r'])
-    plt.ylabel('Reward')
+    plt.plot(1 - data['done'])
+    plt.ylabel('Stable')
     plt.xlabel('Step')
 
     plt.show()
