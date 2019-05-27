@@ -15,7 +15,7 @@ def softmax(x, qfunc, beta, d_actions):
     return np.argmax(np.random.multinomial(1, pmf))
 
 
-class QLearning:
+class DQLearning:
 
     def __init__(self, env, n_episodes, discount, alpha, type):
         self.env = env
@@ -33,8 +33,8 @@ class QLearning:
 
         self.alpha = alpha
 
-        self.vfunc = np.zeros((self.d_state, ))
-        self.qfunc = np.zeros((self.d_state, self.d_action))
+        self.vfunc = np.zeros((2, self.d_state, ))
+        self.qfunc = np.zeros((2, self.d_state, self.d_action))
 
         self.td_error = []
 
@@ -60,12 +60,14 @@ class QLearning:
 
             done = False
             while not done:
+                qidx = 0 if np.random.uniform() < .5 else 1
+
                 if self.type == 'rnd':
                     u = np.random.choice(self.d_action, p=self.ctl)
                 elif self.type == 'greedy':
-                    u = greedy(x, self.qfunc, self.eps, self.d_action)
+                    u = greedy(x, self.qfunc[qidx, ...], self.eps, self.d_action)
                 elif self.type == 'softmax':
-                    u = softmax(x, self.qfunc, self.beta, self.d_action)
+                    u = softmax(x, self.qfunc[qidx, ...], self.beta, self.d_action)
 
                 roll['x'] = np.hstack((roll['x'], x))
                 roll['u'] = np.hstack((roll['u'], u))
@@ -76,11 +78,12 @@ class QLearning:
 
                 err = 0.0
                 if not done:
-                    err = r + self.discount * np.max(self.qfunc[xn, :]) - self.qfunc[x, u]
+                    amax = np.argmax(self.qfunc[qidx, xn, :])[np.newaxis]
+                    err = r + self.discount * self.qfunc[1 - qidx, xn, np.random.choice(amax)] - self.qfunc[qidx, x, u]
                 if done:
-                    err = r - self.qfunc[x, u]
+                    err = r - self.qfunc[qidx, x, u]
 
-                self.qfunc[x, u] += self.alpha * err
+                self.qfunc[qidx, x, u] += self.alpha * err
                 self.td_error = np.append(self.td_error, err)
 
                 x = xn
@@ -102,5 +105,5 @@ if __name__ == "__main__":
 
     env = gym.make('FrozenLake-v0')
 
-    qlearning = QLearning(env, n_episodes=10000, discount=0.95, alpha=0.1, type='softmax')
-    qlearning.run()
+    dqlearning = DQLearning(env, n_episodes=10000, discount=0.95, alpha=0.1, type='softmax')
+    dqlearning.run()

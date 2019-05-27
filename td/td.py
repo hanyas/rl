@@ -52,7 +52,7 @@ class TD:
 
                 x = xn
 
-            print("it:", n, "td error:", self.td_error[-1])
+            print("it: {}, error: {}".format(n, self.td_error[-1]))
 
             rollouts.append(roll)
 
