@@ -8,17 +8,18 @@ from sklearn.preprocessing import PolynomialFeatures
 
 class Policy:
 
-    def __init__(self, d_state, d_action, **kwargs):
+    def __init__(self, d_state, d_action, pdict):
         self.d_state = d_state
         self.d_action = d_action
 
-        self.degree = kwargs.get('degree', False)
+        self.type = 'poly'
+        self.degree = pdict['degree']
         self.n_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
         self.basis = PolynomialFeatures(self.degree, include_bias=False)
 
         self.n_param = self.d_action * self.n_feat
         self.K = 1e-8 * np.random.randn(self.n_param)
-        self.cov = np.eye(self.n_param)
+        self.cov = pdict['cov0'] * np.eye(self.n_param)
 
     def features(self, x):
         return self.basis.fit_transform(x.reshape(-1, self.d_state)).squeeze()
@@ -38,37 +39,39 @@ class Policy:
 
 class PGPE:
 
-    def __init__(self, env, n_episodes, n_steps,
-                 discount, alpha, beta, cov):
+    def __init__(self, env, n_episodes, discount,
+                 alpha, beta, pdict):
         self.env = env
 
         self.d_state = self.env.observation_space.shape[0]
         self.d_action = self.env.action_space.shape[0]
 
-        self.action_limit = self.env.action_space.high
+        self.alim = self.env.action_space.high
 
         self.n_episodes = n_episodes
-        self.n_steps = n_steps
         self.discount = discount
 
         self.alpha = alpha
         self.beta = beta
 
-        self.ctl = Policy(self.d_state, self.d_action, degree=1)
-        self.ctl.cov = cov * self.ctl.cov
+        self.ctl = Policy(self.d_state, self.d_action, pdict)
 
-        self.rollouts = []
+        self.rollouts = None
 
-    def sample(self, n_episodes, n_steps, ctl=None):
+    def sample(self, n_episodes, ctl=None):
         rollouts = []
 
         for _ in range(n_episodes):
             roll = {'x': np.empty((0, self.d_state)),
                     'u': np.empty((0, self.d_action)),
+                    'xn': np.empty((0, self.d_state)),
+                    'done': np.empty((0,), np.int64),
                     'r': np.empty((0,))}
 
             x = self.env.reset()
-            for _ in range(n_steps):
+
+            done = False
+            while not done:
                 if ctl is None:
                     u = self.ctl.actions(x)
                 else:
@@ -77,7 +80,9 @@ class PGPE:
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.alim, self.alim))
+                roll['xn'] = np.vstack((roll['xn'], x))
+                roll['done'] = np.hstack((roll['done'], done))
                 roll['r'] = np.hstack((roll['r'], r))
 
             rollouts.append(roll)
@@ -85,12 +90,12 @@ class PGPE:
         return rollouts
 
     def run(self):
-        self.rollouts = self.sample(n_episodes=self.n_episodes, n_steps=self.n_steps)
-
-        _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((self.n_steps,))[:-1])))
+        self.rollouts = self.sample(n_episodes=self.n_episodes)
 
         _reward = []
         for roll in self.rollouts:
+            _gamma = self.discount * np.ones((len(roll['r']), ))
+            _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
             _reward.append(np.sum(_disc * roll['r']))
 
         _meanr = np.mean(_reward)
@@ -101,8 +106,10 @@ class PGPE:
             _pert = self.ctl.perturb()
 
             # return of perturbed policy
-            _roll = self.sample(n_episodes=1, n_steps=self.n_steps, ctl=_pert)
+            _roll = self.sample(n_episodes=1, ctl=_pert)
 
+            _gamma = self.discount * np.ones((len(_roll[-1]['r']), ))
+            _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
             _reward.append(np.sum(_disc * _roll[-1]['r']))
             _par.append(_pert.K)
 
@@ -114,7 +121,7 @@ class PGPE:
         _r = np.asarray(_reward) - _b
 
         # update
-        _mult = 1. / (self.n_episodes * self.n_steps)
+        _mult = 1. / self.n_episodes
         self.ctl.K += self.alpha * _mult * _r @ _T
         self.ctl.cov += np.diag((self.beta * _mult * _r @ _S))**2
 
@@ -130,14 +137,15 @@ if __name__ == "__main__":
     env = gym.make('LQR-v0')
     env._max_episode_steps = 100
 
-    fdpg = PGPE(env, n_episodes=100, n_steps=100,
-                discount=0.995, alpha=1e-6, beta=1e-8, cov=.025)
+    fdpg = PGPE(env, n_episodes=100, discount=0.995,
+                alpha=1e-6, beta=1e-8,
+                pdict={'type': 'poly', 'degree': 1, 'cov0': 0.025})
 
     for it in range(15):
         ret = fdpg.run()
         print('it=', it, f'ret={ret:{5}.{4}}')
 
-    rollouts = fdpg.sample(25, 100)
+    rollouts = fdpg.sample(25)
 
     fig = plt.figure()
     for r in rollouts:

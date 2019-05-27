@@ -23,16 +23,18 @@ class FourierFeatures:
 
 class Policy:
 
-    def __init__(self, d_state, d_action, **kwargs):
+    def __init__(self, d_state, d_action, pdict):
         self.d_state = d_state
         self.d_action = d_action
 
-        if 'band' in kwargs:
-            self.band = kwargs.get('band', False)
-            self.n_feat = kwargs.get('n_feat', False)
+        self.type = pdict['type']
+
+        if self.type == 'fourier':
+            self.band = pdict['band']
+            self.n_feat = pdict['n_feat']
             self.basis = FourierFeatures(self.d_state, self.n_feat, self.band)
         else:
-            self.degree = kwargs.get('degree', False)
+            self.degree = pdict['degree']
             self.n_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
             self.basis = PolynomialFeatures(self.degree, include_bias=False)
 
@@ -59,47 +61,56 @@ class Policy:
 
 class REINFORCE:
 
-    def __init__(self, env, n_episodes, n_steps, discount, alpha):
+    def __init__(self, env, n_samples, discount, alpha, pdict):
         self.env = env
 
         self.d_state = self.env.observation_space.shape[0]
         self.d_action = self.env.action_space.shape[0]
 
-        self.action_limit = self.env.action_space.high
+        self.alim = self.env.action_space.high
 
-        self.n_episodes = n_episodes
-        self.n_steps = n_steps
+        self.n_samples = n_samples
         self.discount = discount
 
         self.alpha = alpha
 
-        self.ctl = Policy(self.d_state, self.d_action, degree=1)
+        self.ctl = Policy(self.d_state, self.d_action, pdict)
         self.ctl.cov = 0.01 * self.ctl.cov
 
-        self.rollouts = []
+        self.rollouts = None
 
-    def sample(self, n_episodes, n_steps, stoch=True):
+    def sample(self, n_samples, stoch=True):
         rollouts = []
 
-        for _ in range(n_episodes):
+        n = 0
+        while True:
             roll = {'x': np.empty((0, self.d_state)),
                     'u': np.empty((0, self.d_action)),
+                    'xn': np.empty((0, self.d_state)),
+                    'done': np.empty((0,), np.int64),
                     'r': np.empty((0,))}
 
             x = self.env.reset()
 
-            for _ in range(n_steps):
+            done = False
+            while not done:
                 u = self.ctl.actions(x, stoch)
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.alim, self.alim))
+                roll['xn'] = np.vstack((roll['xn'], x))
+                roll['done'] = np.hstack((roll['done'], done))
                 roll['r'] = np.hstack((roll['r'], r))
 
-            rollouts.append(roll)
+                n += 1
+                if n >= n_samples:
+                    roll['done'][-1] = True
+                    rollouts.append(roll)
+                    return rollouts
 
-        return rollouts
+            rollouts.append(roll)
 
     def baseline(self, returns, gradient):
         _norm = np.zeros((self.ctl.n_feat, ))
@@ -113,12 +124,11 @@ class REINFORCE:
         return _b
 
     def run(self):
-        self.rollouts = self.sample(n_episodes=self.n_episodes, n_steps=self.n_steps)
-
-        _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((self.n_steps,))[:-1])))
+        self.rollouts = self.sample(n_samples=self.n_samples)
 
         _return = []
         for roll in self.rollouts:
+            _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((len(roll['r']),))[:-1])))
             _return.append(np.sum(_disc * roll['r']))
 
         _grad = []
@@ -146,14 +156,14 @@ if __name__ == "__main__":
     env = gym.make('LQR-v0')
     env._max_episode_steps = 100
 
-    reinforce = REINFORCE(env, n_episodes=25, n_steps=100,
-                          discount=0.995, alpha=1e-5)
+    reinforce = REINFORCE(env, n_samples=2500, discount=0.995,
+                          alpha=1e-5, pdict={'type': 'poly', 'degree': 1})
 
     for it in range(15):
         ret = reinforce.run()
         print('it=', it, f'ret={ret:{5}.{4}}')
 
-    rollouts = reinforce.sample(25, 100, stoch=False)
+    rollouts = reinforce.sample(2500, stoch=False)
 
     fig = plt.figure()
     for r in rollouts:
