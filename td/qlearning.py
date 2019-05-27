@@ -1,23 +1,46 @@
 import numpy as np
 
 
-def greedy(x, qfunc, eps, d_actions):
-    pmf = eps / d_actions * np.ones((d_actions, ))
-    idx = np.argmax(qfunc[x, :])
-    pmf[idx] = 1.0 - np.sum(np.concatenate((pmf[:idx], pmf[idx + 1:])), axis=0)
-    pmf = pmf / np.sum(pmf)
-    return np.argmax(np.random.multinomial(1, pmf))
+class Policy:
 
+    def __init__(self, d_state, d_action, **kwargs):
+        self.d_state = d_state
+        self.d_action = d_action
 
-def softmax(x, qfunc, beta, d_actions):
-    pmf = np.exp(np.clip(qfunc[x, :] / beta, -700, 700))
-    pmf = pmf / np.sum(pmf)
-    return np.argmax(np.random.multinomial(1, pmf))
+        self.type = kwargs.get('type', False)
+
+        if 'beta' in kwargs:
+            self.beta = kwargs.get('beta', False)
+        if 'eps' in kwargs:
+            self.eps = kwargs.get('eps', False)
+        if 'weights' in kwargs:
+            self.weights = kwargs.get('weights', False)
+
+    def anneal(self, n=0):
+        if self.type == 'softmax':
+            self.beta = self.beta * 0.9995
+        elif self.type == 'greedy':
+            self.eps = 1.0 / (1.0 * (n + 1.0))
+        else:
+            pass
+
+    def action(self, qfunc, x):
+        if self.type == 'softmax':
+            pmf = np.exp(np.clip(qfunc[x, :] / self.beta, -700, 700))
+        elif self.type == 'geedy':
+            pmf = self.eps / self.d_action * np.ones((self.d_action, ))
+            idx = np.argmax(qfunc[x, :])
+            pmf[idx] = 1.0 - np.sum(np.concatenate((pmf[:idx], pmf[idx + 1:])), axis=0)
+        else:
+            return np.random.choice(self.d_action, p=self.weights)
+
+        pmf = pmf / np.sum(pmf)
+        return np.argmax(np.random.multinomial(1, pmf))
 
 
 class QLearning:
 
-    def __init__(self, env, n_episodes, discount, alpha, type):
+    def __init__(self, env, n_episodes, discount, alpha, **kwargs):
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
@@ -26,10 +49,7 @@ class QLearning:
         self.n_episodes = n_episodes
         self.discount = discount
 
-        self.type = type
-        self.eps = 0.1  # epsilon greedy
-        self.beta = 0.98  # softmax
-        self.ctl = 1.0 / self.d_action * np.ones((self.d_action, ))  # random
+        self.ctl = Policy(self.d_state, self.d_action, **kwargs)
 
         self.alpha = alpha
 
@@ -51,21 +71,15 @@ class QLearning:
                     'u': np.empty((0,), np.int64),
                     'r': np.empty((0,))}
 
+            # reset env
             x = self.env.reset()
 
-            if self.type == 'greedy':
-                self.eps = 1.0 / (1.0 * (n + 1.0))
-            elif self.type == 'softmax':
-                self.beta = self.beta * 0.9995
+            # anneal policy
+            self.ctl.anneal(n=n)
 
             done = False
             while not done:
-                if self.type == 'rnd':
-                    u = np.random.choice(self.d_action, p=self.ctl)
-                elif self.type == 'greedy':
-                    u = greedy(x, self.qfunc, self.eps, self.d_action)
-                elif self.type == 'softmax':
-                    u = softmax(x, self.qfunc, self.beta, self.d_action)
+                u = self.ctl.action(self.qfunc, x)
 
                 roll['x'] = np.hstack((roll['x'], x))
                 roll['u'] = np.hstack((roll['u'], u))
