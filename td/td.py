@@ -3,33 +3,38 @@ import numpy as np
 
 class TD:
 
-    def __init__(self, env, n_episodes, discount, alpha):
+    def __init__(self, env, n_samples, discount, alpha):
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
         self.d_action = 4  # self.env.action_space.shape[0]
 
-        self.n_episodes = n_episodes
+        self.n_samples = n_samples
         self.discount = discount
 
+        # random policy
         self.ctl = 1.0 / self.d_action * np.ones((self.d_action,))
 
         self.alpha = alpha
 
         self.vfunc = np.random.randn(self.d_state, )
-        self.td_error = []
 
-        self.rollouts = []
+        self.td_error = []
+        self.rollouts = None
 
     def eval(self):
         rollouts = []
 
-        for n in range(self.n_episodes):
-            roll = {'x': np.empty((0,), np.int64),
-                    'xn': np.empty((0,), np.int64),
-                    'u': np.empty((0,), np.int64),
+        n_samp = 0
+        n_eps = 0
+        while True:
+            roll = {'x': np.empty((0, ), np.int64),
+                    'u': np.empty((0, ), np.int64),
+                    'xn': np.empty((0, ), np.int64),
+                    'done': np.empty((0,), np.int64),
                     'r': np.empty((0,))}
 
+            # reset env
             x = self.env.reset()
 
             done = False
@@ -41,22 +46,30 @@ class TD:
 
                 xn, r, done, _ = self.env.step(u)
                 roll['xn'] = np.hstack((roll['xn'], xn))
+                roll['done'] = np.hstack((roll['done'], done))
                 roll['r'] = np.hstack((roll['r'], r))
 
+                err = 0.0
                 if not done:
-                    self.vfunc[x] += self.discount * (r + self.discount * self.vfunc[xn] - self.vfunc[x])
-                    self.td_error = np.append(self.td_error, r + self.discount * self.vfunc[xn] - self.vfunc[x])
+                    err = r + self.discount * self.vfunc[xn] - self.vfunc[x]
                 if done:
-                    self.vfunc[x] += self.alpha * (r - self.vfunc[x])
-                    self.td_error = np.append(self.td_error, r - self.vfunc[x])
+                    err = r - self.vfunc[x]
+
+                self.vfunc[x] += self.alpha * err
+                self.td_error = np.append(self.td_error, err)
 
                 x = xn
 
-            print("it: {}, error: {}".format(n, self.td_error[-1]))
+                n_samp += 1
+                if n_samp >= self.n_samples:
+                    roll['done'][-1] = True
+                    rollouts.append(roll)
+                    return rollouts
 
+            print("eps: {}, error: {}".format(n_eps, self.td_error[-1]))
+
+            n_eps += 1
             rollouts.append(roll)
-
-        return rollouts
 
 
 if __name__ == "__main__":
@@ -65,7 +78,7 @@ if __name__ == "__main__":
 
     env = gym.make('FrozenLake-v0')
 
-    td = TD(env, n_episodes=1000, discount=0.95, alpha=0.25)
+    td = TD(env, n_samples=10000, discount=0.95, alpha=0.25)
     td.eval()
 
     print(td.vfunc)

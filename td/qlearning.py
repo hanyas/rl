@@ -3,18 +3,18 @@ import numpy as np
 
 class Policy:
 
-    def __init__(self, d_state, d_action, **kwargs):
+    def __init__(self, d_state, d_action, pdict):
         self.d_state = d_state
         self.d_action = d_action
 
-        self.type = kwargs.get('type', False)
+        self.type = pdict['type']
 
-        if 'beta' in kwargs:
-            self.beta = kwargs.get('beta', False)
-        if 'eps' in kwargs:
-            self.eps = kwargs.get('eps', False)
-        if 'weights' in kwargs:
-            self.weights = kwargs.get('weights', False)
+        if 'beta' in pdict:
+            self.beta = pdict['beta']
+        if 'eps' in pdict:
+            self.eps = pdict['eps']
+        if 'weights' in pdict:
+            self.weights = pdict['weights']
 
     def anneal(self, n=0):
         if self.type == 'softmax':
@@ -27,29 +27,28 @@ class Policy:
     def action(self, qfunc, x):
         if self.type == 'softmax':
             pmf = np.exp(np.clip(qfunc[x, :] / self.beta, -700, 700))
-        elif self.type == 'geedy':
-            pmf = self.eps / self.d_action * np.ones((self.d_action, ))
-            idx = np.argmax(qfunc[x, :])
-            pmf[idx] = 1.0 - np.sum(np.concatenate((pmf[:idx], pmf[idx + 1:])), axis=0)
+            return np.random.choice(self.d_action, p=pmf/np.sum(pmf))
+        elif self.type == 'greedy':
+            if self.eps >= np.random.rand():
+                return np.random.choice(self.d_action)
+            else:
+                return np.argmax(qfunc[x, :])
         else:
             return np.random.choice(self.d_action, p=self.weights)
-
-        pmf = pmf / np.sum(pmf)
-        return np.argmax(np.random.multinomial(1, pmf))
 
 
 class QLearning:
 
-    def __init__(self, env, n_episodes, discount, alpha, **kwargs):
+    def __init__(self, env, n_samples, discount, alpha, pdict):
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
         self.d_action = 4  # self.env.action_space.shape[0]
 
-        self.n_episodes = n_episodes
+        self.n_samples = n_samples
         self.discount = discount
 
-        self.ctl = Policy(self.d_state, self.d_action, **kwargs)
+        self.ctl = Policy(self.d_state, self.d_action, pdict)
 
         self.alpha = alpha
 
@@ -57,25 +56,27 @@ class QLearning:
         self.qfunc = np.zeros((self.d_state, self.d_action))
 
         self.td_error = []
-
-        self.rollouts = []
+        self.rollouts = None
 
     def run(self):
         score = np.empty((0, 1))
 
         rollouts = []
 
-        for n in range(self.n_episodes):
-            roll = {'x': np.empty((0,), np.int64),
-                    'xn': np.empty((0,), np.int64),
-                    'u': np.empty((0,), np.int64),
+        n_samp = 0
+        n_eps = 0
+        while True:
+            roll = {'x': np.empty((0, ), np.int64),
+                    'u': np.empty((0, ), np.int64),
+                    'xn': np.empty((0, ), np.int64),
+                    'done': np.empty((0,), np.int64),
                     'r': np.empty((0,))}
 
             # reset env
             x = self.env.reset()
 
             # anneal policy
-            self.ctl.anneal(n=n)
+            self.ctl.anneal(n=n_eps)
 
             done = False
             while not done:
@@ -86,6 +87,7 @@ class QLearning:
 
                 xn, r, done, _ = self.env.step(u)
                 roll['xn'] = np.hstack((roll['xn'], xn))
+                roll['done'] = np.hstack((roll['done'], done))
                 roll['r'] = np.hstack((roll['r'], r))
 
                 err = 0.0
@@ -102,13 +104,18 @@ class QLearning:
                 if len(score) < 100:
                     score = np.append(score, r)
                 else:
-                    score[n % 100] = r
+                    score[n_eps % 100] = r
 
-            print("it: {} step: {} rwd:{} score:{}".format(n, len(roll['r']), r, np.mean(score, axis=0)))
+                n_samp += 1
+                if n_samp >= self.n_samples:
+                    roll['done'][-1] = True
+                    rollouts.append(roll)
+                    return rollouts
 
+            print("eps: {} step: {} rwd:{} score:{}".format(n_eps, len(roll['r']), r, np.mean(score, axis=0)))
+
+            n_eps += 1
             rollouts.append(roll)
-
-        return rollouts
 
 
 if __name__ == "__main__":
@@ -116,5 +123,6 @@ if __name__ == "__main__":
 
     env = gym.make('FrozenLake-v0')
 
-    qlearning = QLearning(env, n_episodes=10000, discount=0.95, alpha=0.1, type='softmax')
+    qlearning = QLearning(env, n_samples=10000*200, discount=0.95,
+                          alpha=0.1, pdict={'type': 'softmax', 'beta': 0.98})
     qlearning.run()
