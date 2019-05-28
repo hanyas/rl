@@ -131,25 +131,26 @@ class Policy:
         if 'weights' in pdict:
             self.weights = pdict['weights']
 
-    def action(self, qfunc, x):
-        qvals = qfunc.values(x).flatten()
-
-        if self.type == 'softmax':
-            pmf = np.exp(np.clip(qvals / self.beta, -700, 700))
-            return np.random.choice(self.d_action, p=pmf/np.sum(pmf))
-        elif self.type == 'greedy':
-            if self.eps >= np.random.rand():
-                return np.random.choice(self.d_action)
+    def action(self, qvals, stoch=True):
+        if stoch:
+            if self.type == 'softmax':
+                pmf = np.exp(np.clip(qvals / self.beta, -700, 700))
+                return np.random.choice(self.d_action, p=pmf/np.sum(pmf))
+            elif self.type == 'greedy':
+                if self.eps >= np.random.rand():
+                    return np.random.choice(self.d_action)
+                else:
+                    return np.argmax(qvals)
             else:
-                return np.argmax(qvals)
+                return np.random.choice(self.d_action, p=self.weights)
         else:
-            return np.random.choice(self.d_action, p=self.weights)
+            return np.argmax(qvals)
 
 
 class LSPI:
 
     def __init__(self, env, n_samples, n_actions,
-                 discount, alpha, beta, qdict, pdict):
+                 discount, lmbda, alpha, beta, qdict, pdict):
 
         self.env = env
 
@@ -161,6 +162,8 @@ class LSPI:
 
         self.ctl = Policy(self.d_state, self.d_action, pdict)
 
+        self.lmbda = lmbda
+
         # lstd regression
         self.alpha = alpha
         self.beta = beta
@@ -170,10 +173,9 @@ class LSPI:
 
         self.n_feat = self.qfunc.n_feat
 
-        self.data = None
         self.rollouts = None
 
-    def sample(self, n_samples):
+    def sample(self, n_samples, stoch=True):
         rollouts = []
 
         n = 0
@@ -188,7 +190,7 @@ class LSPI:
 
             done = False
             while not done:
-                u = self.ctl.action(self.qfunc, x)
+                u = self.ctl.action(self.qfunc.values(x), stoch)
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.hstack((roll['u'], u))
@@ -202,76 +204,78 @@ class LSPI:
                 if n >= n_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
-
-                    data = merge(*rollouts)
-                    return rollouts, data
+                    return rollouts
 
             rollouts.append(roll)
 
-    def lstd(self, data, phi, nphi, type='batch'):
-        if type == 'batch':
-            _A = np.einsum('nk,nh->kh', phi, (phi - self.discount * nphi))
-            _b = np.einsum('nk,n->k', phi, data['r'])
+    def lstd(self, rollouts, lmbda):
+        _K = self.qfunc.n_feat * self.qfunc.d_action
 
-            _I = np.eye(phi.shape[1])
+        _A = np.zeros((_K, _K))
+        _b = np.zeros((_K,))
 
-            _C = np.linalg.solve(phi.T.dot(phi) + self.alpha * _I, phi.T).T
-            _X = _C.dot(_A + self.alpha * _I)
-            _y = _C.dot(_b)
+        _I = np.eye(_K)
 
-            return np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y))
+        _PHI = np.zeros((0, _K))
 
-            # from sklearn.linear_model import Ridge
-            # clf = Ridge(alpha=self.alpha, fit_intercept=False)
-            # clf.fit(_A, _b)
-            # return clf.coef_
+        for roll in rollouts:
+            _t = 0
+            _z = roll['phi'][_t, :]
 
-        elif type == 'iter':
-            _K = phi.shape[1]
-            _N = phi.shape[0]
+            done = False
+            while not done:
+                done = roll['done'][_t]
 
-            _B = np.eye(_K) * self.alpha
-            _b = np.zeros((_K, ))
+                _PHI = np.vstack((_PHI, roll['phi'][_t, :]))
 
-            for n in range(_N):
-                _denom = 1.0 + (phi[n, :] - self.discount * nphi[n, :]).T @ _B @ phi[n, :]
-                _B -= _B @ np.outer(phi[n, :], (phi[n, :] - self.discount * nphi[n, :])) @ _B / _denom
+                _A += np.outer(_z, roll['phi'][_t, :] - (1 - done) * self.discount * roll['nphi'][_t, :])
+                _b += _z * roll['r'][_t]
 
-                _b += phi[n, :] * data['r'][n]
+                if not done:
+                    _z = lmbda * _z + roll['phi'][_t + 1, :]
+                    _t = _t + 1
 
-            return _B @ _b
+        _C = np.linalg.solve(_PHI.T.dot(_PHI) + self.alpha * _I, _PHI.T).T
+        _X = _C.dot(_A + self.alpha * _I)
+        _y = _C.dot(_b)
 
-    def run(self, n_iter):
-        self.rollouts, self.data = self.sample(self.n_samples)
+        return np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y))
 
-        feat = self.qfunc.features(self.data['x'])
-        phi = np.zeros((feat.shape[1], feat.shape[2]))
+    def run(self, delta):
+        self.rollouts = self.sample(self.n_samples)
 
-        for n in range(self.data['u'].shape[0]):
-            u = self.data['u'][n]
-            phi[n, :] = feat[u, n, :]
+        for roll in self.rollouts:
+            # state-action features
+            phi = self.qfunc.features(roll['x'])
 
-        nfeat = self.qfunc.features(self.data['xn'])
-        nphi = np.zeros((nfeat.shape[1], nfeat.shape[2]))
+            # select corresponding action features
+            idx = (roll['u'], np.asarray(range(len(roll['u']))))
+            roll['phi'] = phi[idx]
 
-        for it in range(n_iter):
-            # actions under new policy
-            self.data['un'] = np.zeros((self.n_samples, ), np.int64)
+        it = 0
+        norm = np.inf
+        while norm > delta:
+            for roll in self.rollouts:
+                # actions under max-q policy
+                roll['un'] = np.argmax(self.qfunc.values(roll['xn']), axis=0)
 
-            for n in range(self.data['xn'].shape[0]):
-                un = self.ctl.action(self.qfunc, self.data['xn'][n, :])
-                self.data['un'][n] = un
-                nphi[n, :] = nfeat[un, n, :]
+                # next-state-action features
+                nphi = self.qfunc.features(roll['xn'])
+
+                # find and turn-off features of absorbing states
+                absorbing = np.argwhere(roll['done']).flatten()
+                nphi[:, absorbing, ...] *= 0.0
+
+                idx = (roll['un'], np.asarray(range(len(roll['un']))))
+                roll['nphi'] = nphi[idx]
 
             _omega = self.qfunc.omega.copy()
-            self.qfunc.omega = self.lstd(self.data, phi, nphi)
+            self.qfunc.omega = self.lstd(self.rollouts, lmbda=self.lmbda)
 
-            conv = np.mean(np.linalg.norm(self.qfunc.omega - _omega))
+            norm = np.linalg.norm(self.qfunc.omega - _omega)
 
-            print('it=', it, f'conv={conv:{5}.{4}}')
-
-            if conv < 1e-3:
-                break
+            print('it=', it, f'conv={norm:{5}.{4}}')
+            it += 1
 
 
 if __name__ == "__main__":
@@ -289,21 +293,22 @@ if __name__ == "__main__":
     # env = gym.make('Lagoudakis-v0')
 
     env = gym.make('CartPole-v0')
-    env._max_episode_steps = 10000
+    env._max_episode_steps = 100
 
     lspi = LSPI(env=env, n_samples=10000, n_actions=2,
-                discount=0.9, alpha=1e-8, beta=1e-12,
+                discount=0.95, lmbda=.25,
+                alpha=1e-12, beta=1e-8,
                 qdict={'type': 'poly',
                        'degree': 2},
                 pdict={'type': 'greedy',
                        'eps': 1.0},
                 )
 
-    lspi.run(10)
+    lspi.run(delta=1e-3)
 
     # test deterministic policy
-    lspi.ctl.eps = 0.0
-    _, data = lspi.sample(n_samples=1000)
+    rollouts = lspi.sample(n_samples=1000, stoch=False)
+    data = merge(*rollouts)
 
     plt.subplot(411)
     plt.plot(data['x'][:, 2])
