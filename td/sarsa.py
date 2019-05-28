@@ -97,6 +97,7 @@ class SARSA:
 
             # reset env
             x = self.env.reset()
+            u = self.ctl.action(self.qfunc, x)
 
             # anneal policy
             self.ctl.anneal(n=n_eps)
@@ -106,8 +107,6 @@ class SARSA:
 
             done = False
             while not done:
-                u = self.ctl.action(self.qfunc, x)
-
                 roll['x'] = np.hstack((roll['x'], x))
                 roll['u'] = np.hstack((roll['u'], u))
 
@@ -118,20 +117,19 @@ class SARSA:
 
                 un = self.ctl.action(self.qfunc, xn)
 
+                self.traces.update(x, u)
+
                 err = 0.0
                 if not done:
                     err = r + self.discount * self.qfunc[xn, un] - self.qfunc[x, u]
+                    self.qfunc += self.alpha * err * self.traces.table
+                    self.traces.table *= self.discount * self.lmbda
+                    x, u = xn, un
                 if done:
                     err = r - self.qfunc[x, u]
-
-                self.traces.update(x, u)
-
-                self.qfunc += self.alpha * err * self.traces.table
-                self.traces.table *= self.discount * self.lmbda
+                    self.qfunc += self.alpha * err * self.traces.table
 
                 self.td_error = np.append(self.td_error, err)
-
-                x, u = xn, un
 
                 if len(score) < 100:
                     score = np.append(score, r)
