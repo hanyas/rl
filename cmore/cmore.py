@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
 import autograd.numpy as np
 from autograd import grad
 
@@ -16,16 +13,16 @@ import copy
 
 class Sphere:
 
-    def __init__(self, dim_cntxt, dim_action):
-        self.dim_cntxt = dim_cntxt
-        self.dim_action = dim_action
+    def __init__(self, d_cntxt, d_action):
+        self.d_cntxt = d_cntxt
+        self.d_action = d_action
 
-        M = np.random.randn(self.dim_action, self.dim_action)
+        M = np.random.randn(self.d_action, self.d_action)
         M = 0.5 * (M + M.T)
         self.Q = M @ M.T
 
-    def context(self, n_samples):
-        return np.random.uniform(-1.0, 1.0, size=(n_samples, self.dim_cntxt))
+    def context(self, n_episodes):
+        return np.random.uniform(-1.0, 1.0, size=(n_episodes, self.d_cntxt))
 
     def eval(self, x, c):
         diff = x - c
@@ -34,20 +31,20 @@ class Sphere:
 
 class Policy:
 
-    def __init__(self, dim_cntxt, dim_action, degree, cov0):
-        self.dim_cntxt = dim_cntxt
-        self.dim_action = dim_action
+    def __init__(self, d_cntxt, d_action, degree, cov0):
+        self.d_cntxt = d_cntxt
+        self.d_action = d_action
 
         self.degree = degree
         self.basis = PolynomialFeatures(self.degree, include_bias=False)
-        self.n_feat = int(sc.special.comb(self.degree + self.dim_cntxt, self.degree) - 1)
+        self.n_feat = int(sc.special.comb(self.degree + self.d_cntxt, self.degree) - 1)
 
-        self.b =  1e-8 * np.random.randn(self.dim_action, )
-        self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
-        self.cov = cov0 * np.eye(dim_action)
+        self.b = 1e-8 * np.random.randn(self.d_action, )
+        self.K = 1e-8 * np.random.randn(self.d_action, self.n_feat)
+        self.cov = cov0 * np.eye(d_action)
 
     def features(self, c):
-        return self.basis.fit_transform(c.reshape(-1, self.dim_cntxt))
+        return self.basis.fit_transform(c.reshape(-1, self.d_cntxt))
 
     def mean(self, c):
         feat = self.features(c)
@@ -65,7 +62,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(self.cov), diff), axis=0) -
-                    self.dim_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def entropy(self):
@@ -93,20 +90,20 @@ class Policy:
 
 class Model:
 
-    def __init__(self, dim_action, n_cfeat):
+    def __init__(self, d_action, n_cfeat):
         self.n_cfeat = n_cfeat
-        self.dim_action = dim_action
+        self.d_action = d_action
 
-        self.R = np.zeros((self.dim_action + self.n_cfeat, self.dim_action + self.n_cfeat))
-        self.r = np.zeros((self.dim_action + self.n_cfeat, ))
+        self.R = np.zeros((self.d_action + self.n_cfeat, self.d_action + self.n_cfeat))
+        self.r = np.zeros((self.d_action + self.n_cfeat, ))
 
-        self.Raa = np.zeros((self.dim_action, self.dim_action))
-        self.ra = np.zeros((self.dim_action,))
+        self.Raa = np.zeros((self.d_action, self.d_action))
+        self.ra = np.zeros((self.d_action,))
 
         self.Rcc = np.zeros((self.n_cfeat, self.n_cfeat))
         self.rc = np.zeros((self.n_cfeat, ))
 
-        self.Rac = np.zeros((self.dim_action, self.n_cfeat))
+        self.Rac = np.zeros((self.d_action, self.n_cfeat))
 
         self.r0 = np.zeros((1, ))
 
@@ -121,18 +118,18 @@ class Model:
         par = reg.coef_
 
         self.r0 = par[0]
-        self.r = par[1:self.dim_action + self.n_cfeat + 1]
+        self.r = par[1:self.d_action + self.n_cfeat + 1]
 
-        uid = np.triu_indices(self.dim_action + self.n_cfeat)
-        self.R[uid] = par[self.dim_action + self.n_cfeat + 1:]
+        uid = np.triu_indices(self.d_action + self.n_cfeat)
+        self.R[uid] = par[self.d_action + self.n_cfeat + 1:]
         self.R.T[uid] = self.R[uid]
 
-        self.Raa = self.R[:self.dim_action, :self.dim_action]
+        self.Raa = self.R[:self.d_action, :self.d_action]
         self.Rcc = self.R[-self.n_cfeat:, -self.n_cfeat:]
-        self.Rac = self.R[:self.dim_action, -self.n_cfeat:]
+        self.Rac = self.R[:self.d_action, -self.n_cfeat:]
 
-        self.ra = 2.0 * self.r[:self.dim_action]
-        self.rc = 2.0 * self.r[self.dim_action:]
+        self.ra = 2.0 * self.r[:self.d_action]
+        self.rc = 2.0 * self.r[self.d_action:]
 
         # check for positive definitness
         w, v = np.linalg.eig(self.Raa)
@@ -143,15 +140,15 @@ class Model:
 
 class CMORE:
 
-    def __init__(self, func, n_samples,
+    def __init__(self, func, n_episodes,
                  kl_bound, ent_rate,
                  cdgr, **kwargs):
 
         self.func = func
-        self.dim_action = self.func.dim_action
-        self.dim_cntxt = self.func.dim_cntxt
+        self.d_action = self.func.d_action
+        self.d_cntxt = self.func.d_cntxt
 
-        self.n_samples = n_samples
+        self.n_episodes = n_episodes
 
         self.kl_bound = kl_bound
         self.ent_rate = ent_rate
@@ -159,14 +156,14 @@ class CMORE:
         self.cdgr = cdgr
 
         self.basis = PolynomialFeatures(self.cdgr, include_bias=False)
-        self.n_cfeat = int(sc.special.comb(self.cdgr + self.dim_cntxt, self.cdgr) - 1)
+        self.n_cfeat = int(sc.special.comb(self.cdgr + self.d_cntxt, self.cdgr) - 1)
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.dim_action, self.dim_cntxt,
+            self.ctl = Policy(self.d_action, self.d_cntxt,
                               self.cdgr, cov0)
         else:
-            self.ctl = Policy(self.dim_action, self.dim_cntxt,
+            self.ctl = Policy(self.d_action, self.d_cntxt,
                               self.cdgr, 100.0)
 
         if 'h0' in kwargs:
@@ -174,25 +171,22 @@ class CMORE:
         else:
             self.h0 = 75.0
 
-        self.model = Model(self.dim_action, self.n_cfeat)
+        self.model = Model(self.d_action, self.n_cfeat)
 
         self.eta = np.array([1.0])
         self.omega = np.array([1.0])
 
-        self.data = {}
+        self.data = None
         self.phi = None
 
-    def sample(self, n_samples):
-        data = {}
-
-        data['c'] = self.func.context(n_samples)
+    def sample(self, n_episodes):
+        data = {'c': self.func.context(n_episodes)}
         data['x'] = self.ctl.action(data['c'])
         data['r'] = self.func.eval(data['c'], data['x'])
-
         return data
 
     def features(self, c):
-        return self.basis.fit_transform(c.reshape(-1, self.dim_cntxt))
+        return self.basis.fit_transform(c.reshape(-1, self.d_cntxt))
 
     def dual(self, var, eps, beta, ctl, model, phi):
         eta = var[0]
@@ -200,7 +194,7 @@ class CMORE:
 
         Raa, Rac, ra = model.Raa, model.Rac, model.ra
 
-        b, K, Q= ctl.b, ctl.K, ctl.cov
+        b, K, Q = ctl.b, ctl.K, ctl.cov
         Qi = np.linalg.inv(Q)
 
         F = eta * Qi - 2 * Raa
@@ -246,16 +240,16 @@ class CMORE:
 
         deta0 = eps - 0.5 * b.T @ df_deta + 0.5 * f.T @ dFi_deta @ f + f.T @ (Fi @ df_deta)\
                - 0.5 * q_lgdt + 0.5 * f_lgdt - 0.5 * (eta + omega) * np.trace(Fi @ Qi)\
-               + 0.5 * self.dim_action
+               + 0.5 * self.d_action
 
-        detal = L.T @ (Fi @ df_deta) - L.T @ ((Fi.T @ (Qi @ (Fi @ f))))\
+        detal = L.T @ (Fi @ df_deta) - L.T @ (Fi.T @ (Qi @ (Fi @ f)))\
                + (Qi @ K).T @ (Fi @ f) - K.T @ (Qi @ b)
 
         detaq = 0.5 * L.T @ (dFi_deta @ L) + (Qi @ K).T @ (Fi @ L) - 0.5 * K.T @ Qi @ K
 
         deta = deta0 + np.mean(phi @ detal, axis=0) + np.mean(np.sum((phi @ detaq).T * phi.T, axis=0))
 
-        domega = - beta + 0.5 * (f_lgdt + self.dim_action)
+        domega = - beta + 0.5 * (f_lgdt + self.d_action)
 
         return np.hstack([deta, domega])
 
@@ -264,7 +258,7 @@ class CMORE:
         ent_bound = self.ent_rate * (self.ctl.entropy() + self.h0) - self.h0
 
         # sample current policy
-        self.data = self.sample(self.n_samples)
+        self.data = self.sample(self.n_episodes)
         rwrd = np.mean(self.data['r'])
 
         # get context features
@@ -300,10 +294,8 @@ class CMORE:
 
 if __name__ == "__main__":
 
-    # np.random.seed(1337)
-
-    cmore = CMORE(func=Sphere(dim_cntxt=1, dim_action=1),
-                  n_samples=1000,
+    cmore = CMORE(func=Sphere(d_cntxt=1, d_action=1),
+                  n_episodes=1000,
                   kl_bound=0.05, ent_rate=0.99,
                   cov0=100.0, h0=75.0, cdgr=1)
 

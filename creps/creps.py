@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
 import autograd.numpy as np
 from autograd import grad
 
@@ -13,22 +10,23 @@ from sklearn.preprocessing import PolynomialFeatures
 
 import copy
 
+
 EXP_MAX = 700.0
 EXP_MIN = -700.0
 
 
 class Sphere:
 
-    def __init__(self, dim_cntxt, dim_action):
-        self.dim_cntxt = dim_cntxt
-        self.dim_action = dim_action
+    def __init__(self, d_cntxt, d_action):
+        self.d_cntxt = d_cntxt
+        self.d_action = d_action
 
-        M = np.random.randn(self.dim_action, self.dim_action)
+        M = np.random.randn(self.d_action, self.d_action)
         M = 0.5 * (M + M.T)
         self.Q = M @ M.T
 
-    def context(self, n_samples):
-        return np.random.uniform(-1.0, 1.0, size=(n_samples, self.dim_cntxt))
+    def context(self, n_episodes):
+        return np.random.uniform(-1.0, 1.0, size=(n_episodes, self.d_cntxt))
 
     def eval(self, x, c):
         diff = x - c
@@ -37,19 +35,19 @@ class Sphere:
 
 class Policy:
 
-    def __init__(self, dim_cntxt, dim_action, degree, cov0):
-        self.dim_cntxt = dim_cntxt
-        self.dim_action = dim_action
+    def __init__(self, d_cntxt, d_action, degree, cov0):
+        self.d_cntxt = d_cntxt
+        self.d_action = d_action
 
         self.degree = degree
         self.basis = PolynomialFeatures(self.degree)
-        self.n_feat = int(sc.special.comb(self.degree + self.dim_cntxt, self.degree))
+        self.n_feat = int(sc.special.comb(self.degree + self.d_cntxt, self.degree))
 
-        self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
-        self.cov = cov0 * np.eye(dim_action)
+        self.K = 1e-8 * np.random.randn(self.d_action, self.n_feat)
+        self.cov = cov0 * np.eye(d_action)
 
     def features(self, c):
-        return self.basis.fit_transform(c.reshape(-1, self.dim_cntxt))
+        return self.basis.fit_transform(c.reshape(-1, self.d_cntxt))
 
     def mean(self, c):
         feat = self.features(c)
@@ -75,7 +73,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(self.cov), diff), axis=0) -
-                    self.dim_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def klm(self, pi, c):
@@ -83,7 +81,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(pi.cov) @ self.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(pi.cov), diff), axis=0) -
-                    self.dim_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
+                    self.d_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
         return kl
 
     def entropy(self):
@@ -139,12 +137,11 @@ class Policy:
 
 class Vfunction:
 
-    def __init__(self, dim_cntxt, degree):
-        self.dim_cntxt = dim_cntxt
+    def __init__(self, d_cntxt, degree):
+        self.d_cntxt = d_cntxt
 
         self.degree = degree
-        self.n_feat = int(
-            sc.special.comb(self.degree + self.dim_cntxt, self.degree))
+        self.n_feat = int(sc.special.comb(self.degree + self.d_cntxt, self.degree))
         self.basis = PolynomialFeatures(self.degree)
 
         self.omega = 1e-8 * np.random.randn(self.n_feat)
@@ -160,15 +157,15 @@ class Vfunction:
 class CREPS:
 
     def __init__(self, func,
-                 n_samples, kl_bound,
+                 n_episodes, kl_bound,
                  vdgr, pdgr,
                  vreg, preg, **kwargs):
 
         self.func = func
-        self.dim_action = self.func.dim_action
-        self.dim_cntxt = self.func.dim_cntxt
+        self.d_action = self.func.d_action
+        self.d_cntxt = self.func.d_cntxt
 
-        self.n_samples = n_samples
+        self.n_episodes = n_episodes
         self.kl_bound = kl_bound
 
         self.vreg = vreg
@@ -179,30 +176,27 @@ class CREPS:
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.dim_action, self.dim_cntxt,
+            self.ctl = Policy(self.d_action, self.d_cntxt,
                               self.pdgr, cov0)
         else:
-            self.ctl = Policy(self.dim_action, self.dim_cntxt,
+            self.ctl = Policy(self.d_action, self.d_cntxt,
                               self.pdgr, 100.0)
 
         self.n_pfeat = self.ctl.n_feat
 
-        self.vfunc = Vfunction(self.dim_cntxt, self.vdgr)
+        self.vfunc = Vfunction(self.d_cntxt, self.vdgr)
         self.n_vfeat = self.vfunc.n_feat
 
         self.eta = np.array([1.0])
 
-        self.data = {}
+        self.data = None
         self.vfeatures = None
         self.w = None
 
-    def sample(self, n_samples):
-        data = {}
-
-        data['c'] = self.func.context(n_samples)
+    def sample(self, n_episodes):
+        data = {'c': self.func.context(n_episodes)}
         data['x'] = self.ctl.action(data['c'])
         data['r'] = self.func.eval(data['c'], data['x'])
-
         return data
 
     def weights(self, eta, omega, r, phi):
@@ -238,7 +232,7 @@ class CREPS:
         return np.mean(w * np.log(w), axis=0)
 
     def run(self):
-        self.data = self.sample(self.n_samples)
+        self.data = self.sample(self.n_episodes)
         rwrd = np.mean(self.data['r'])
 
         self.vfeatures = self.vfunc.features(self.data['c'])
@@ -275,8 +269,8 @@ if __name__ == "__main__":
 
     # np.random.seed(1337)
 
-    creps = CREPS(func=Sphere(dim_cntxt=3, dim_action=3),
-                  n_samples=100, kl_bound=0.1,
+    creps = CREPS(func=Sphere(d_cntxt=3, d_action=3),
+                  n_episodes=100, kl_bound=0.1,
                   vdgr=2, pdgr=1,
                   vreg=1e-16, preg=1e-16,
                   cov0=100.0)

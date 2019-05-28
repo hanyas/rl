@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
 import autograd.numpy as np
 from autograd import grad
 
@@ -12,20 +9,21 @@ from sklearn.preprocessing import PolynomialFeatures
 
 import copy
 
+
 EXP_MAX = 700.0
 EXP_MIN = -700.0
 
 
 class Sphere:
 
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
+    def __init__(self, d_action):
+        self.d_action = d_action
 
-        M = np.random.randn(dim_action, dim_action)
+        M = np.random.randn(d_action, d_action)
         tmp = M @ M.T
         Q = tmp[np.nonzero(np.triu(tmp))]
 
-        q = 0.0 * np.random.rand(dim_action)
+        q = 0.0 * np.random.rand(d_action)
         q0 = 0.0 * np.random.rand()
 
         self.param = np.hstack((q0, q, Q))
@@ -38,42 +36,42 @@ class Sphere:
 
 class Rosenbrock:
 
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
+    def __init__(self, d_action):
+        self.d_action = d_action
 
     def eval(self, x):
         return - np.sum(100.0 * (x[:, 1:] - x[:, :-1] ** 2.0) ** 2.0 +
-                        (1 - x[: ,:-1]) ** 2.0, axis=-1)
+                        (1 - x[:, :-1]) ** 2.0, axis=-1)
 
 
 class Styblinski:
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
+    def __init__(self, d_action):
+        self.d_action = d_action
 
     def eval(self, x):
         return - 0.5 * np.sum(x**4.0 - 16.0 * x**2 + 5 * x, axis=-1)
 
 
 class Rastrigin:
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
+    def __init__(self, d_action):
+        self.d_action = d_action
 
     def eval(self, x):
-        return - (10.0 * self.dim_action +
+        return - (10.0 * self.d_action +
                   np.sum(x**2 - 10.0 * np.cos(2.0 * np.pi * x), axis=-1))
 
 
 class Policy:
 
-    def __init__(self, dim_action, cov0):
-        self.dim_action = dim_action
+    def __init__(self, d_action, cov0):
+        self.d_action = d_action
 
-        self.mu = np.random.randn(self.dim_action)
-        self.cov = cov0 * np.eye(self.dim_action)
+        self.mu = np.random.randn(self.d_action)
+        self.cov = cov0 * np.eye(self.d_action)
 
     def action(self, n):
         aux = sc.stats.multivariate_normal(mean=self.mu, cov=self.cov).rvs(n)
-        return aux.reshape((n, self.dim_action))
+        return aux.reshape((n, self.d_action))
 
     def loglik(self, pi, x):
         mu, cov = pi.mu, pi.cov
@@ -87,14 +85,14 @@ class Policy:
         diff = self.mu - pi.mu
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) + diff.T @ np.linalg.inv(self.cov) @ diff
-                    - self.dim_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    - self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def klm(self, pi):
         diff = pi.mu - self.mu
 
         kl = 0.5 * (np.trace(np.linalg.inv(pi.cov) @ self.cov) + diff.T @ np.linalg.inv(pi.cov) @ diff
-                    - self.dim_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
+                    - self.d_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
         return kl
 
     def entropy(self):
@@ -130,30 +128,28 @@ class Policy:
 
 class EREPS:
 
-    def __init__(self, func, n_samples,
+    def __init__(self, func, n_episodes,
                  kl_bound, **kwargs):
 
         self.func = func
-        self.dim_action =self.func.dim_action
+        self.d_action = self.func.d_action
 
-        self.n_samples = n_samples
+        self.n_episodes = n_episodes
         self.kl_bound = kl_bound
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.dim_action, cov0)
+            self.ctl = Policy(self.d_action, cov0)
         else:
-            self.ctl = Policy(self.dim_action, 100.0)
+            self.ctl = Policy(self.d_action, 100.0)
 
-        self.data = {}
+        self.data = None
         self.w = None
+        self.eta = np.array([1.0])
 
-    def sample(self, n_samples):
-        data = {}
-
-        data['x'] = self.ctl.action(n_samples)
+    def sample(self, n_episodes):
+        data = {'x': self.ctl.action(n_episodes)}
         data['r'] = self.func.eval(data['x'])
-
         return data
 
     def weights(self, r, eta):
@@ -178,7 +174,7 @@ class EREPS:
         return np.mean(w * np.log(w), axis=0)
 
     def run(self):
-        self.data = self.sample(self.n_samples)
+        self.data = self.sample(self.n_episodes)
         rwrd = np.mean(self.data['r'])
 
         res = sc.optimize.minimize(self.dual, np.array([1.0]),
@@ -189,6 +185,7 @@ class EREPS:
                                        self.kl_bound,
                                        self.data['r']),
                                    bounds=((1e-8, 1e8),))
+
         self.eta = res.x
         self.w, _ = self.weights(self.data['r'], self.eta)
 
@@ -207,22 +204,20 @@ class EREPS:
 
 if __name__ == "__main__":
 
-    # np.random.seed(1337)
-
-    ereps = EREPS(func=Sphere(dim_action=5),
-                  n_samples=100, kl_bound=0.1,
+    ereps = EREPS(func=Sphere(d_action=25),
+                  n_episodes=500, kl_bound=0.1,
                   cov0=100.0)
 
-    # ereps = EREPS(func=Rosenbrock(dim_action=3),
-    #               n_samples=1000, kl_bound=0.05,
+    # ereps = EREPS(func=Rosenbrock(d_action=3),
+    #               n_episodes=1000, kl_bound=0.05,
     #               cov0=100.0)
     #
-    # ereps = EREPS(func=Styblinski(dim_action=3),
-    #               n_samples=1000, kl_bound=0.05,
+    # ereps = EREPS(func=Styblinski(d_action=3),
+    #               n_episodes=1000, kl_bound=0.05,
     #               cov0=100.0)
     #
-    # ereps = EREPS(func=Rastrigin(dim_action=3),
-    #               n_samples=1000, kl_bound=0.05,
+    # ereps = EREPS(func=Rastrigin(d_action=3),
+    #               n_episodes=1000, kl_bound=0.05,
     #               cov0=100.0)
 
     for it in range(250):
@@ -231,3 +226,6 @@ if __name__ == "__main__":
         print('it=', it, f'rwrd={rwrd:{5}.{4}}',
               f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
               f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
+
+        if ent < -3e2:
+            break
