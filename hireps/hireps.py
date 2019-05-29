@@ -77,7 +77,7 @@ class Policy:
 
 class HiREPS:
 
-    def __init__(self, func, n_episodes, n_comp, kl_bound):
+    def __init__(self, func, n_episodes, n_comp, kl_bound, ent_bound):
 
         self.func = func
         self.d_action = self.func.d_action
@@ -85,13 +85,16 @@ class HiREPS:
         self.n_comp = n_comp
 
         self.n_episodes = n_episodes
+
         self.kl_bound = kl_bound
+        self.ent_bound = ent_bound
 
         self.ctl = Policy(self.d_action, self.n_comp)
 
         self.data = None
         self.w = None
         self.eta = np.array([1.0])
+        self.beta = np.array([100.0])
 
     def sample(self, n_episodes):
         x, p = self.ctl.action(n_episodes)
@@ -104,46 +107,65 @@ class HiREPS:
         w = np.exp(np.clip(adv / eta, EXP_MIN, EXP_MAX))
         return w, adv
 
-    def dual(self, eta, eps, r, p):
+    def dual(self, var, eps, delta, r, p):
+        eta, beta = var[0], var[1]
         w, _ = self.weights(r, eta)
-        g = eta * eps + np.max(r) + eta * np.log(np.mean(np.sum(p * w, axis=0)))
+        resp = np.power(p.T, 1.0 + beta / eta)
+        g = eta * eps + beta * delta + np.max(r) + eta * np.log(np.mean(np.sum(resp * w, axis=0)))
         return g
 
     def kl_samples(self, w):
+        resp = np.power(self.data['p'].T, 1.0 + self.beta / self.eta)
+        resp = np.clip(resp, 1e-75, np.inf)
+
         w = np.clip(w, 1e-75, np.inf)
-        w = np.sum(self.data['p'].T * w, axis=0)
+        w = np.sum(resp * w, axis=0)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
+
+    def ent_samples(self, w):
+        resp = np.power(self.data['p'].T, 1.0 + self.beta / self.eta)
+        resp = np.clip(resp, 1e-75, np.inf)
+
+        w = np.clip(w, 1e-75, np.inf)
+        aux = resp * w / np.mean(np.sum(resp * w, axis=0))
+        return - np.mean(np.sum(aux * np.log(resp), axis=0))
 
     def run(self):
         self.data = self.sample(self.n_episodes)
         rwrd = np.mean(self.data['r'])
 
-        res = sc.optimize.minimize(self.dual, np.array([1.0]),
+        res = sc.optimize.minimize(self.dual, np.array([1.0, 10.0]),
                                    method='SLSQP',
                                    jac=grad(self.dual),
                                    args=(
                                        self.kl_bound,
+                                       self.ent_bound,
                                        self.data['r'],
-                                       self.data['p'].T),
-                                   bounds=((1e-8, 1e8),))
+                                       self.data['p']),
+                                   bounds=((1e-8, 1e8), (1e-8, 1e8), ))
 
-        self.eta = res.x
+        self.eta = res.x[0]
+        self.beta = res.x[1]
+
         self.w, _ = self.weights(self.data['r'], self.eta)
 
         kls = self.kl_samples(self.w)
+        ent = self.ent_samples(self.w)
+
         self.ctl.update(self.w)
 
-        return rwrd, kls
+        return rwrd, kls, ent
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    hireps = HiREPS(func=Himmelblau(), n_comp=10,
-                    n_episodes=2500, kl_bound=0.1)
+    hireps = HiREPS(func=Himmelblau(), n_comp=5,
+                    n_episodes=2500, kl_bound=0.1, ent_bound=1.0)
 
     for it in range(250):
-        rwrd, kls = hireps.run()
+        rwrd, kls, ent = hireps.run()
 
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'kls={kls:{5}.{4}}')
+        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
+              f'kls={kls:{5}.{4}}', f'ent={ent:{5}.{4}}')
