@@ -52,9 +52,9 @@ class Policy:
         for superitr in range(3):
             # Gibbs sampling to wander around the posterior
             for _ in range(100):
-                self.mixture.resample_model()
+                self.mixture.resample_model(importance=[weights])
             # mean field to lock onto a mode
-            scores = [self.mixture.meanfield_coordinate_descent_step(importance=weights) for _ in range(100)]
+            scores = [self.mixture.meanfield_coordinate_descent_step(importance=[weights]) for _ in range(100)]
 
             allscores.append(scores)
             allmodels.append(copy.deepcopy(self.mixture))
