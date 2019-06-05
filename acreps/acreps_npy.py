@@ -19,7 +19,7 @@ EXP_MAX = 700.0
 EXP_MIN = -700.0
 
 
-def merge_dicts(*dicts):
+def merge(*dicts):
     d = {}
     for dict in dicts:
         for key in dict:
@@ -29,7 +29,7 @@ def merge_dicts(*dicts):
                 d[key] = [dict[key]]
 
     for key in d:
-        d[key] = np.concatenate(d[key]).squeeze()
+        d[key] = np.concatenate(d[key])
 
     return d
 
@@ -62,8 +62,7 @@ class Policy:
             self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(
-                sc.special.comb(self.degree + self.dim_state, self.degree))
+            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
         self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
@@ -87,7 +86,7 @@ class Policy:
         mu, cov = pi.mean(x), pi.cov
         c = mu.shape[-1] * np.log(2.0 * np.pi)
 
-        ans = - 0.5 * (np.einsum('nk,kh,nh->n', mu - u, np.linalg.inv(cov), mu - u) +
+        ans = - 0.5 * (np.einsum('nk,kh,nh->n', u - mu, np.linalg.inv(cov), u - mu) +
                        np.log(np.linalg.det(cov)) + c)
         return ans
 
@@ -169,8 +168,7 @@ class Vfunction:
             self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(
-                sc.special.comb(self.degree + self.dim_state, self.degree))
+            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
         self.omega = 1e-8 * np.random.randn(self.n_feat)
@@ -195,26 +193,25 @@ class Qfunction:
             self.basis = FourierFeatures(self.dim_state + self.dim_action, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(
-                sc.special.comb(self.degree + (self.dim_state + self.dim_action), self.degree))
+            self.n_feat = int(sc.special.comb(self.degree + (self.dim_state + self.dim_action), self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
         self.theta = 1e-8 * np.random.randn(self.n_feat)
 
-    def features(self, x, a):
-        return self.basis.fit_transform(np.concatenate((x, a), axis=-1))
+    def features(self, x, u):
+        _in = np.hstack((x, u))
+        return self.basis.fit_transform(_in)
 
-    def values(self, x, a):
-        feat = self.features(x, a)
+    def values(self, x, u):
+        feat = self.features(x, u)
         return np.dot(feat, self.theta)
 
 
 class ACREPS:
 
     def __init__(self, env,
-                 n_samples, n_keep,
-                 n_rollouts, n_steps,
-                 kl_bound, discount, trace,
+                 n_samples, n_keep, n_rollouts,
+                 kl_bound, discount, lmbda,
                  vreg, preg, cov0,
                  **kwargs):
 
@@ -225,13 +222,11 @@ class ACREPS:
 
         self.n_samples = n_samples
         self.n_keep = n_keep
-
         self.n_rollouts = n_rollouts
-        self.n_steps = n_steps
 
         self.kl_bound = kl_bound
         self.discount = discount
-        self.trace = trace
+        self.lmbda = lmbda
 
         self.vreg = vreg
         self.preg = preg
@@ -289,38 +284,33 @@ class ACREPS:
                     'r': np.empty((0,)),
                     'done': np.empty((0,), np.int64)}
 
-            rollouts.append(roll)
-
             x = self.env.reset()
 
-            while True:
+            done = False
+            while not done:
                 u = self.ctl.actions(x, stoch)
 
-                rollouts[-1]['x'] = np.vstack((rollouts[-1]['x'], x))
-                rollouts[-1]['u'] = np.vstack((rollouts[-1]['u'], u))
+                roll['x'] = np.vstack((roll['x'], x))
+                roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(
-                    np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
                 if render:
                     self.env.render()
 
-                rollouts[-1]['xn'] = np.vstack((rollouts[-1]['xn'], x))
-                rollouts[-1]['r'] = np.hstack((rollouts[-1]['r'], r))
-                rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], done))
+                roll['xn'] = np.vstack((roll['xn'], x))
+                roll['r'] = np.hstack((roll['r'], r))
+                roll['done'] = np.hstack((roll['done'], done))
 
                 n = n + 1
                 if n >= n_samples:
-                    rollouts[-1]['done'][-1] = True
-
-                    data = merge_dicts(*rollouts)
-                    data['u'] = np.reshape(data['u'], (-1, self.dim_action))
-
+                    roll['done'][-1] = True
+                    rollouts.append(roll)
+                    data = merge(*rollouts)
                     return rollouts, data
 
-                if done:
-                    break
+            rollouts.append(roll)
 
-    def evaluate(self, n_rollouts, n_steps, stoch=False, render=False):
+    def evaluate(self, n_rollouts, stoch=False, render=False):
         rollouts = []
 
         for n in range(n_rollouts):
@@ -330,44 +320,74 @@ class ACREPS:
 
             x = self.env.reset()
 
-            for t in range(n_steps):
+            done = False
+            while not done:
                 u = self.ctl.actions(x, stoch)
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(
-                    np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
                 if render:
                     self.env.render()
 
                 roll['r'] = np.hstack((roll['r'], r))
 
-                if done:
-                    break
-
             rollouts.append(roll)
 
-        data = merge_dicts(*rollouts)
-        data['u'] = np.reshape(data['u'], (-1, self.dim_action))
-
+        data = merge(*rollouts)
         return rollouts, data
 
-    def lstd(self, phin, phi, discount, data):
-        A = phi.T @ (phi - discount * phin)
-        b = np.sum(phi * data['r'][:, np.newaxis], axis=0).T
+    def lstd(self, rollouts, gamma, lmbda, alpha=1e-6, beta=1e-6):
+        for roll in rollouts:
+            # state-action features
+            roll['phi'] = self.qfunc.features(roll['x'], roll['u'])
 
-        I = np.eye(phi.shape[1])
+            # actions under current policy
+            roll['un'] = self.ctl.actions(roll['xn'], stoch=False)
 
-        C = np.linalg.solve(phi.T @ phi + 1e-8 * I, phi.T).T
-        X = C @ (A + 1e-8 * I)
-        y = C @ b
+            # next-state-action features
+            roll['nphi'] = self.qfunc.features(roll['xn'], roll['un'])
 
-        theta = np.linalg.solve(X.T @ X + 1e-6 * I, X.T @ y)
+            # find and turn-off features of absorbing states
+            absorbing = np.argwhere(roll['done']).flatten()
+            roll['nphi'][absorbing, :] *= 0.0
 
-        return theta, np.dot(phi, theta)
+        _K = self.qfunc.n_feat * self.qfunc.dim_action
 
-    def gae(self, data, phi, omega, discount, trace):
+        _A = np.zeros((_K, _K))
+        _b = np.zeros((_K,))
+
+        _I = np.eye(_K)
+
+        _PHI = np.zeros((0, _K))
+
+        for roll in rollouts:
+            _t = 0
+            _z = roll['phi'][_t, :]
+
+            done = False
+            while not done:
+                done = roll['done'][_t]
+
+                _PHI = np.vstack((_PHI, roll['phi'][_t, :]))
+
+                _A += np.outer(_z, roll['phi'][_t, :] - (1 - done) * gamma * roll['nphi'][_t, :])
+                _b += _z * roll['r'][_t]
+
+                if not done:
+                    _z = lmbda * _z + roll['phi'][_t + 1, :]
+                    _t = _t + 1
+
+        _C = np.linalg.solve(_PHI.T.dot(_PHI) + alpha * _I, _PHI.T).T
+        _X = _C.dot(_A + alpha * _I)
+        _y = _C.dot(_b)
+
+        theta = np.linalg.solve(_X.T.dot(_X) + beta * _I, _X.T.dot(_y))
+
+        return theta, rollouts, merge(*rollouts)
+
+    def gae(self, data, phi, omega, discount, lmbda):
         values = np.dot(phi, omega)
         adv = np.zeros_like(values)
 
@@ -377,7 +397,7 @@ class ACREPS:
                 adv[k] = data['r'][k] - values[k]
             else:
                 adv[k] = data['r'][k] + discount * values[k + 1] - values[k] +\
-                         discount * trace * adv[k + 1]
+                         discount * lmbda * adv[k + 1]
 
         targets = adv + values
         return targets
@@ -453,22 +473,18 @@ class ACREPS:
         return np.mean(w * np.log(w), axis=0)
 
     def run(self):
-        _, eval = self.evaluate(self.n_rollouts, self.n_steps)
+        _, eval = self.evaluate(self.n_rollouts)
 
         self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
         self.vfeatures = self.featurize(self.data)
 
-        # un = self.ctl.actions(self.data['xn'], False).reshape((-1, 1))
-        # self.qfeatures = self.qfunc.features(self.data['x'], self.data['u'])
-        # self.nqfeatures = self.qfunc.features(self.data['xn'], un)
-
-        # self.qfunc.theta, self.targets = self.lstd(self.nqfeatures, self.qfeatures,
-        #                                            self.discount, self.data)
+        # self.qfunc.theta, self.rollouts, self.data = self.lstd(self.rollouts, gamma=self.discount, lmbda=self.lmbda)
+        # self.targets = self.qfunc.values(self.data['xn'], self.data['un'])
 
         # self.targets = self.mc(self.data, self.discount)
 
         self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
-                                self.discount, self.trace)
+                                self.discount, self.lmbda)
 
         res = sc.optimize.minimize(self.dual,
                                    np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
@@ -531,8 +547,8 @@ class ACREPS:
 
         self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
 
-        # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
-        pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
+        pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
+        # pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
 
         kls = self.kl_samples(self.w)
         kli = self.ctl.kli(pol, self.data['x'])
@@ -552,16 +568,15 @@ if __name__ == "__main__":
     import gym
     import lab
 
-    # np.random.seed(0)
+    np.random.seed(0)
     env = gym.make('Pendulum-v0')
-    env._max_episode_steps = 500
-    # env.seed(0)
+    env._max_episode_steps = 200
+    env.seed(0)
 
     acreps = ACREPS(env=env,
-                    n_samples=3000, n_keep=0,
-                    n_rollouts=20, n_steps=250,
-                    kl_bound=0.1, discount=0.98, trace=0.95,
-                    vreg=1e-12, preg=1e-12, cov0=16.0,
+                    n_samples=3000, n_keep=0, n_rollouts=20,
+                    kl_bound=0.1, discount=0.98, lmbda=0.95,
+                    vreg=1e-12, preg=1e-12, cov0=8.0,
                     n_vfeat=75, n_pfeat=75,
                     s_band=np.array([0.5, 0.5, 4.0]),
                     sa_band=np.array([0.5, 0.5, 4.0, 1.0]))
@@ -579,9 +594,8 @@ if __name__ == "__main__":
     # # env.seed(0)
     #
     # acreps = ACREPS(env=env,
-    #                 n_samples=2500, n_keep=0,
-    #                 n_rollouts=25, n_steps=150,
-    #                 kl_bound=0.1, discount=0.95, trace=0.95,
+    #                 n_samples=2500, n_keep=0, n_rollouts=25,
+    #                 kl_bound=0.1, discount=0.95, lmbda=0.95,
     #                 vreg=1e-32, preg=1e-32, cov0=25.0,
     #                 vdgr=2, pdgr=1)
     #

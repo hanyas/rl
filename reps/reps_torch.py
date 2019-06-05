@@ -16,6 +16,21 @@ EXP_MAX = 700.0
 EXP_MIN = -700.0
 
 
+def merge(*dicts):
+    d = {}
+    for dict in dicts:
+        for key in dict:
+            try:
+                d[key].append(dict[key])
+            except KeyError:
+                d[key] = [dict[key]]
+
+    for key in d:
+        d[key] = np.concatenate(d[key])
+
+    return d
+
+
 def batches(batch_size, data_size):
     idx_all = random.sample(range(data_size), data_size)
     idx_iter = iter(idx_all)
@@ -199,12 +214,8 @@ class REPS:
 
         self.action_limit = self.env.action_space.high
 
-        self.data = {'xi': np.empty((0, self.dim_state)),
-                     'x': np.empty((0, self.dim_state)),
-                     'u': np.empty((0, self.dim_action)),
-                     'xn': np.empty((0, self.dim_state)),
-                     'r': np.empty((0, 1)),
-                     'done': np.empty((0,), np.int64)}
+        self.data = {}
+        self.rollouts = []
 
         self.vfeatures = None
         self.ivfeatures = None
@@ -217,93 +228,92 @@ class REPS:
         self.pfeatures = None
 
     def sample(self, n_samples, n_keep=0, reset=True, stoch=True, render=False):
-        if n_keep==0:
-            data = {'xi': np.empty((0, self.dim_state)),
-                    'x': np.empty((0, self.dim_state)),
-                    'u': np.empty((0, self.dim_action)),
-                    'xn': np.empty((0, self.dim_state)),
-                    'r': np.empty((0, 1)),
-                    'done': np.empty((0,), np.int64)}
+        if len(self.rollouts) >= n_keep:
+            rollouts = random.sample(self.rollouts, n_keep)
         else:
-            data = {'xi': np.empty((0, self.dim_state)),
-                    'x': self.data['x'][-n_keep:, :],
-                    'u': self.data['u'][-n_keep:, :],
-                    'xn': self.data['xn'][-n_keep:, :],
-                    'r': self.data['r'][-n_keep:, :],
-                    'done': self.data['done'][-n_keep:]}
+            rollouts = []
 
         coin = sc.stats.binom(1, 1.0 - self.discount)
 
         n = 0
         while True:
+            roll = {'xi': np.empty((0, self.dim_state)),
+                    'x': np.empty((0, self.dim_state)),
+                    'u': np.empty((0, self.dim_action)),
+                    'xn': np.empty((0, self.dim_state)),
+                    'r': np.empty((0, 1)),
+                    'done': np.empty((0,), np.int64)}
+
             x = self.env.reset()
 
-            data['xi'] = np.vstack((data['xi'], x))
-            data['done'] = np.hstack((data['done'], False))
+            roll['xi'] = np.vstack((roll['xi'], x))
+            roll['done'] = np.hstack((roll['done'], False))
 
-            while True:
+            done = False
+            while not done:
+                u = self.ctl.actions(x, stoch)
+
                 if reset and coin.rvs():
-                    data['done'][-1] = True
-                    break
+                    done = True
+                    roll['done'][-1] = done
                 else:
-                    u = self.ctl.actions(x, stoch)
+                    roll['x'] = np.vstack((roll['x'], x))
+                    roll['u'] = np.vstack((roll['u'], u))
 
-                    data['x'] = np.vstack((data['x'], x))
-                    data['u'] = np.vstack((data['u'], u))
-
-                    x, r, done, _ = self.env.step(
-                        np.clip(u, - self.action_limit, self.action_limit))
+                    x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
                     if render:
                         self.env.render()
 
-                    data['xn'] = np.vstack((data['xn'], x))
-                    data['r'] = np.vstack((data['r'], r))
-                    data['done'] = np.hstack((data['done'], done))
+                    roll['xn'] = np.vstack((roll['xn'], x))
+                    roll['r'] = np.vstack((roll['r'], r))
+                    roll['done'] = np.hstack((roll['done'], done))
 
                     n = n + 1
                     if n >= n_samples:
-                        data['done'][-1] = True
+                        roll['done'][-1] = True
+                        rollouts.append(roll)
+                        data = merge(*rollouts)
 
-                        data['xi'] = torch.from_numpy(np.stack(data['xi'])).float()
                         data['x'] = torch.from_numpy(np.stack(data['x'])).float()
                         data['u'] = torch.from_numpy(np.stack(data['u'])).float()
                         data['xn'] = torch.from_numpy(np.stack(data['xn'])).float()
                         data['r'] = torch.from_numpy(np.stack(data['r'])).float()
 
-                        return data
+                        return rollouts, data
 
-                    if done:
-                        break
+            rollouts.append(roll)
 
     def evaluate(self, n_rollouts, n_steps, render=False):
-        data = {'x': np.empty((0, self.dim_state)),
-                'u': np.empty((0, self.dim_action)),
-                'r': np.empty((0, 1))}
+        rollouts = []
 
         for n in range(n_rollouts):
+            roll = {'x': np.empty((0, self.dim_state)),
+                    'u': np.empty((0, self.dim_action)),
+                    'r': np.empty((0, 1))}
+
             x = self.env.reset()
 
             for t in range(n_steps):
                 u = self.ctl.actions(x, False)
 
-                data['x'] = np.vstack((data['x'], x))
-                data['u'] = np.vstack((data['u'], u))
+                roll['x'] = np.vstack((roll['x'], x))
+                roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(
-                    np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
                 if render:
                     self.env.render()
 
-                data['r'] = np.vstack((data['r'], r))
+                roll['r'] = np.vstack((roll['r'], r))
 
-                if done:
-                    break
+            rollouts.append(roll)
+
+        data = merge(*rollouts)
 
         data['x'] = torch.from_numpy(np.stack(data['x'])).float()
         data['u'] = torch.from_numpy(np.stack(data['u'])).float()
         data['r'] = torch.from_numpy(np.stack(data['r'])).float()
 
-        return data
+        return rollouts, data
 
     def kl_samples(self, weights):
         w = torch.clamp(weights, 1e-75, np.inf)
@@ -311,12 +321,11 @@ class REPS:
         return torch.mean(w * torch.log(w), dim=0).numpy().squeeze()
 
     def run(self):
-        # eval = self.evaluate(self.n_rollouts, self.n_steps)
+        # _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
-        self.data = self.sample(self.n_samples, self.n_keep)
+        self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
 
-        self.ivfeatures = torch.mean(self.dual.features(self.data['xi']),
-                                  dim=0, keepdim=True)
+        self.ivfeatures = torch.mean(self.dual.features(self.data['xi']), dim=0, keepdim=True)
         self.vfeatures = self.dual.features(self.data['x'])
         self.nvfeatures = self.dual.features(self.data['xn'])
         self.features = self.discount * self.nvfeatures - self.vfeatures +\

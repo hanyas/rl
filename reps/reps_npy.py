@@ -19,7 +19,7 @@ EXP_MAX = 700.0
 EXP_MIN = -700.0
 
 
-def merge_dicts(*dicts):
+def merge(*dicts):
     d = {}
     for dict in dicts:
         for key in dict:
@@ -29,7 +29,7 @@ def merge_dicts(*dicts):
                 d[key] = [dict[key]]
 
     for key in d:
-        d[key] = np.concatenate(d[key]).squeeze()
+        d[key] = np.concatenate(d[key])
 
     return d
 
@@ -62,8 +62,7 @@ class Policy:
             self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(
-                sc.special.comb(self.degree + self.dim_state, self.degree))
+            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
         self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
@@ -169,8 +168,7 @@ class Vfunction:
             self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(
-                sc.special.comb(self.degree + self.dim_state, self.degree))
+            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
         self.omega = 1e-8 * np.random.randn(self.n_feat)
@@ -256,43 +254,38 @@ class REPS:
                     'r': np.empty((0,)),
                     'done': np.empty((0,), np.int64)}
 
-            rollouts.append(roll)
-
             x = self.env.reset()
 
-            rollouts[-1]['xi'] = np.vstack((rollouts[-1]['xi'], x))
-            rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], False))
+            roll['xi'] = np.vstack((roll['xi'], x))
+            roll['done'] = np.hstack((roll['done'], False))
 
-            while True:
+            done = False
+            while not done:
                 u = self.ctl.actions(x, stoch)
 
                 if reset and coin.rvs():
-                    rollouts[-1]['done'][-1] = True
-                    break
+                    done = True
+                    roll['done'][-1] = done
                 else:
-                    rollouts[-1]['x'] = np.vstack((rollouts[-1]['x'], x))
-                    rollouts[-1]['u'] = np.vstack((rollouts[-1]['u'], u))
+                    roll['x'] = np.vstack((roll['x'], x))
+                    roll['u'] = np.vstack((roll['u'], u))
 
-                    x, r, done, _ = self.env.step(
-                        np.clip(u, - self.action_limit, self.action_limit))
+                    x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
                     if render:
                         self.env.render()
 
-                    rollouts[-1]['xn'] = np.vstack((rollouts[-1]['xn'], x))
-                    rollouts[-1]['r'] = np.hstack((rollouts[-1]['r'], r))
-                    rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], done))
+                    roll['xn'] = np.vstack((roll['xn'], x))
+                    roll['r'] = np.hstack((roll['r'], r))
+                    roll['done'] = np.hstack((roll['done'], done))
 
                     n = n + 1
                     if n >= n_samples:
-                        rollouts[-1]['done'][-1] = True
-
-                        data = merge_dicts(*rollouts)
-                        data['u'] = np.reshape(data['u'], (-1, self.dim_action))
-
+                        roll['done'][-1] = True
+                        rollouts.append(roll)
+                        data = merge(*rollouts)
                         return rollouts, data
 
-                    if done:
-                        break
+            rollouts.append(roll)
 
     def evaluate(self, n_rollouts, n_steps, stoch=False, render=False):
         rollouts = []
@@ -316,14 +309,9 @@ class REPS:
 
                 roll['r'] = np.hstack((roll['r'], r))
 
-                if done:
-                    break
-
             rollouts.append(roll)
 
-        data = merge_dicts(*rollouts)
-        data['u'] = np.reshape(data['u'], (-1, self.dim_action))
-
+        data = merge(*rollouts)
         return rollouts, data
 
     def featurize(self, data):

@@ -10,10 +10,9 @@ params:
   n_samples: 5000
   n_keep: 0
   n_rollouts: 25
-  n_steps: 500
   kl_bound: 0.1
   discount: 0.99
-  trace: 0.95
+  lmbda: 0.95
   vreg: 1.e-8
   preg: 1.e-8
   cov0: 100.0
