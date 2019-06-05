@@ -209,6 +209,27 @@ class LSPI:
             rollouts.append(roll)
 
     def lstd(self, rollouts, lmbda):
+        for roll in rollouts:
+            # state-action features
+            phi = self.qfunc.features(roll['x'])
+
+            # select corresponding action features
+            idx = (roll['u'], np.asarray(range(len(roll['u']))))
+            roll['phi'] = phi[idx]
+
+            # actions under max-q policy
+            roll['un'] = np.argmax(self.qfunc.values(roll['xn']), axis=0)
+
+            # next-state-action features
+            nphi = self.qfunc.features(roll['xn'])
+
+            # find and turn-off features of absorbing states
+            absorbing = np.argwhere(roll['done']).flatten()
+            nphi[:, absorbing, ...] *= 0.0
+
+            idx = (roll['un'], np.asarray(range(len(roll['un']))))
+            roll['nphi'] = nphi[idx]
+
         _K = self.qfunc.n_feat * self.qfunc.d_action
 
         _A = np.zeros((_K, _K))
@@ -239,38 +260,16 @@ class LSPI:
         _X = _C.dot(_A + self.alpha * _I)
         _y = _C.dot(_b)
 
-        return np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y))
+        return np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y)), rollouts
 
     def run(self, delta):
         self.rollouts = self.sample(self.n_samples)
 
-        for roll in self.rollouts:
-            # state-action features
-            phi = self.qfunc.features(roll['x'])
-
-            # select corresponding action features
-            idx = (roll['u'], np.asarray(range(len(roll['u']))))
-            roll['phi'] = phi[idx]
-
         it = 0
         norm = np.inf
         while norm > delta:
-            for roll in self.rollouts:
-                # actions under max-q policy
-                roll['un'] = np.argmax(self.qfunc.values(roll['xn']), axis=0)
-
-                # next-state-action features
-                nphi = self.qfunc.features(roll['xn'])
-
-                # find and turn-off features of absorbing states
-                absorbing = np.argwhere(roll['done']).flatten()
-                nphi[:, absorbing, ...] *= 0.0
-
-                idx = (roll['un'], np.asarray(range(len(roll['un']))))
-                roll['nphi'] = nphi[idx]
-
             _omega = self.qfunc.omega.copy()
-            self.qfunc.omega = self.lstd(self.rollouts, lmbda=self.lmbda)
+            self.qfunc.omega, self.rollouts = self.lstd(self.rollouts, lmbda=self.lmbda)
 
             norm = np.linalg.norm(self.qfunc.omega - _omega)
 
