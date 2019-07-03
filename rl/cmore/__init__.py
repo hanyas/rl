@@ -1,0 +1,1 @@
+from .cmore import CMORE
