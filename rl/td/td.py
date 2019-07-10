@@ -3,13 +3,12 @@ import numpy as np
 
 class TD:
 
-    def __init__(self, env, n_samples, discount, alpha):
+    def __init__(self, env, discount, alpha):
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
         self.d_action = 4  # self.env.action_space.shape[0]
 
-        self.n_samples = n_samples
         self.discount = discount
 
         # random policy
@@ -22,7 +21,7 @@ class TD:
         self.td_error = []
         self.rollouts = None
 
-    def eval(self):
+    def eval(self, n_samples):
         rollouts = []
 
         n_samp = 0
@@ -61,7 +60,7 @@ class TD:
                 x = xn
 
                 n_samp += 1
-                if n_samp >= self.n_samples:
+                if n_samp >= n_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     return rollouts
@@ -78,8 +77,8 @@ if __name__ == "__main__":
 
     env = gym.make('FrozenLake-v0')
 
-    td = TD(env, n_samples=10000, discount=0.95, alpha=0.25)
-    td.eval()
+    td = TD(env, discount=0.95, alpha=0.25)
+    td.eval(n_samples=10000)
 
     print(td.vfunc)
 

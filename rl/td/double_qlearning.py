@@ -39,13 +39,12 @@ class Policy:
 
 class DoubleQLearning:
 
-    def __init__(self, env, n_samples, discount, alpha, pdict):
+    def __init__(self, env, discount, alpha, pdict):
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
         self.d_action = 4  # self.env.action_space.shape[0]
 
-        self.n_samples = n_samples
         self.discount = discount
 
         self.ctl = Policy(self.d_state, self.d_action, pdict)
@@ -58,7 +57,7 @@ class DoubleQLearning:
         self.td_error = []
         self.rollouts = None
 
-    def run(self):
+    def run(self, n_samples):
         score = np.empty((0, 1))
 
         rollouts = []
@@ -110,23 +109,13 @@ class DoubleQLearning:
                     score[n_eps % 100] = r
 
                 n_samp += 1
-                if n_samp >= self.n_samples:
+                if n_samp >= n_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     return rollouts
 
-            print("eps: {} step: {} rwd:{} score:{}".format(n_eps, len(roll['r']), r, np.mean(score, axis=0)))
+            print("eps: {} step: {} rwd:{} score:{}".format(n_eps, len(roll['r']),
+                                                            r, np.mean(score, axis=0)))
 
             n_eps += 1
             rollouts.append(roll)
-
-
-if __name__ == "__main__":
-    import gym
-
-    env = gym.make('FrozenLake-v0')
-
-    dqlearning = DoubleQLearning(env, n_samples=10000*200, discount=0.95,
-                                 alpha=0.1, pdict={'type': 'softmax', 'beta': 0.98})
-
-    dqlearning.run()
