@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# @Filename: grid.py
+# @Date: 2019-07-10-03-20
+# @Author: Hany Abdulsamad
+# @Contact: hany@robot-learning.de
+
 import numpy as np
 import matplotlib.pyplot as plt
 

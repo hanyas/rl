@@ -1,32 +1,13 @@
 import autograd.numpy as np
-from autograd import grad
 
 import scipy as sc
 from scipy import optimize
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import  Ridge
+from sklearn.linear_model import Ridge
 
 import copy
-
-
-class Sphere:
-
-    def __init__(self, d_cntxt, d_action):
-        self.d_cntxt = d_cntxt
-        self.d_action = d_action
-
-        M = np.random.randn(self.d_action, self.d_action)
-        M = 0.5 * (M + M.T)
-        self.Q = M @ M.T
-
-    def context(self, n_episodes):
-        return np.random.uniform(-1.0, 1.0, size=(n_episodes, self.d_cntxt))
-
-    def eval(self, x, c):
-        diff = x - c
-        return - np.einsum('nk,kh,nh->n', diff, self.Q, diff)
 
 
 class Policy:
@@ -253,54 +234,57 @@ class CMORE:
 
         return np.hstack([deta, domega])
 
-    def run(self):
-        # update entropy bound
-        ent_bound = self.ent_rate * (self.ctl.entropy() + self.h0) - self.h0
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'rwrd': [],
+                  'kl': [],
+                  'ent': []}
 
-        # sample current policy
-        self.data = self.sample(self.n_episodes)
-        rwrd = np.mean(self.data['r'])
+        for it in range(nb_iter):
+            # update entropy bound
+            ent_bound = self.ent_rate * (self.ctl.entropy() + self.h0) - self.h0
 
-        # get context features
-        self.phi = self.features(self.data['c'])
+            # sample current policy
+            self.data = self.sample(self.n_episodes)
+            rwrd = np.mean(self.data['r'])
 
-        # fit quadratic model
-        self.model.fit(self.phi, self.data['x'], self.data['r'])
+            # get context features
+            self.phi = self.features(self.data['c'])
 
-        # optimize dual
-        var = np.stack((100.0, 1000.0))
-        bnds = ((1e-8, 1e8), (1e-8, 1e8))
+            # fit quadratic model
+            self.model.fit(self.phi, self.data['x'], self.data['r'])
 
-        res = sc.optimize.minimize(self.dual, var,
-                                   method='L-BFGS-B',
-                                   jac=self.grad,
-                                   args=(self.kl_bound, ent_bound,
-                                         self.ctl, self.model, self.phi),
-                                   bounds=bnds)
-        self.eta = res.x[0]
-        self.omega = res.x[1]
+            # optimize dual
+            var = np.stack((100.0, 1000.0))
+            bnds = ((1e-8, 1e8), (1e-8, 1e8))
 
-        # update policy
-        pi = self.ctl.update(self.eta, self.omega, self.model)
+            res = sc.optimize.minimize(self.dual, var,
+                                       method='L-BFGS-B',
+                                       jac=self.grad,
+                                       args=(self.kl_bound, ent_bound,
+                                             self.ctl, self.model, self.phi),
+                                       bounds=bnds)
+            self.eta = res.x[0]
+            self.omega = res.x[1]
 
-        # check kl
-        kl = self.ctl.kli(pi, self.data['c'])
+            # update policy
+            pi = self.ctl.update(self.eta, self.omega, self.model)
 
-        self.ctl = pi
-        ent = self.ctl.entropy()
+            # check kl
+            kl = self.ctl.kli(pi, self.data['c'])
 
-        return rwrd, kl, ent
+            self.ctl = pi
+            ent = self.ctl.entropy()
 
+            _trace['rwrd'].append(rwrd)
+            _trace['kl'].append(kl)
+            _trace['ent'].append(ent)
 
-if __name__ == "__main__":
+            if verbose:
+                print('it=', it, f'rwrd={rwrd:{5}.{4}}',
+                      f'kl={kl:{5}.{4}}',
+                      f'ent={ent:{5}.{4}}')
 
-    cmore = CMORE(func=Sphere(d_cntxt=1, d_action=1),
-                  n_episodes=1000,
-                  kl_bound=0.05, ent_rate=0.99,
-                  cov0=100.0, h0=75.0, cdgr=1)
+            if ent < -3e2:
+                break
 
-    for it in range(250):
-        rwrd, kl, ent = cmore.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-              f'kl={kl:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return _trace

@@ -75,24 +75,3 @@ class VI:
             self.Q = np.zeros(self.sdim + self.adim)
 
             self.V, self.Q, self.A = self.infhor(self.V, self.Q, loop, discount)
-
-
-if __name__ == '__main__':
-    from rl.dp.envs import Grid
-    import matplotlib.pyplot as plt
-
-    env = Grid()
-
-    vi = VI(env)
-    vi.run(type='fin', horizon=25, loop=25)
-
-    ax = vi.env.world('Environment Finite Horizon')
-    vi.env.policy(vi.A[0, ...], ax)
-    plt.show()
-
-    vi = VI(env)
-    vi.run(type='inf', discount=0.9, loop=25)
-
-    ax = vi.env.world('Environment Infinite Horizon')
-    vi.env.policy(vi.A, ax)
-    plt.show()

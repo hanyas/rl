@@ -1,9 +1,7 @@
 import autograd.numpy as np
-from autograd import grad
 
 import scipy as sc
 from scipy import optimize
-from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import Ridge
@@ -11,62 +9,13 @@ from sklearn.linear_model import Ridge
 import copy
 
 
-class Sphere:
-
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
-
-        M = np.random.randn(self.dim_action, self.dim_action)
-        M = 0.5 * (M + M.T)
-        tmp = M @ M.T
-
-        Q = tmp[np.nonzero(np.triu(tmp))]
-
-        q = 0.0 * np.random.rand(self.dim_action)
-        q0 = 0.0 * np.random.rand()
-
-        self.param = np.hstack((q0, q, Q))
-        self.basis = PolynomialFeatures(degree=2)
-
-    def eval(self, x):
-        feat = self.basis.fit_transform(x)
-        return - np.dot(feat, self.param)
-
-
-class Rosenbrock:
-
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
-
-    def eval(self, x):
-        return - np.sum(100.0 * (x[:, 1:] - x[:, :-1] ** 2.0) ** 2.0 +
-                        (1 - x[:, :-1]) ** 2.0, axis=-1)
-
-
-class Styblinski:
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
-
-    def eval(self, x):
-        return - 0.5 * np.sum(x ** 4.0 - 16.0 * x ** 2 + 5 * x, axis=-1)
-
-
-class Rastrigin:
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
-
-    def eval(self, x):
-        return - (10.0 * self.dim_action +
-                  np.sum(x ** 2 - 10.0 * np.cos(2.0 * np.pi * x), axis=-1))
-
-
 class Policy:
 
-    def __init__(self, dim_action, cov0):
-        self.dim_action = dim_action
+    def __init__(self, d_action, cov0):
+        self.d_action = d_action
 
-        self.mu = 0.0 * np.random.randn(dim_action)
-        self.cov = cov0 * np.eye(dim_action)
+        self.mu = 0.0 * np.random.randn(d_action)
+        self.cov = cov0 * np.eye(d_action)
 
     def action(self, n):
         return np.random.multivariate_normal(self.mu, self.cov, size=(n))
@@ -75,7 +24,7 @@ class Policy:
         diff = self.mu - pi.mu
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) + diff.T @ np.linalg.inv(self.cov) @ diff
-                    - self.dim_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    - self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def entropy(self):
@@ -93,18 +42,18 @@ class Policy:
         f = eta * invQ @ b + ra
 
         pol.mu = F @ f
-        pol.cov = F * (eta + omega) + np.eye(self.dim_action) * 1e-24
+        pol.cov = F * (eta + omega) + np.eye(self.d_action) * 1e-24
 
         return pol
 
 
 class Model:
 
-    def __init__(self, dim_action):
-        self.dim_action = dim_action
+    def __init__(self, d_action):
+        self.d_action = d_action
 
-        self.Raa = np.zeros((dim_action, dim_action))
-        self.ra = np.zeros((dim_action,))
+        self.Raa = np.zeros((d_action, d_action))
+        self.ra = np.zeros((d_action,))
         self.r0 = np.zeros((1, ))
 
     def fit(self, x, r):
@@ -115,11 +64,11 @@ class Model:
         reg.fit(feat, r)
         par = reg.coef_
 
-        uid = np.triu_indices(self.dim_action)
-        self.Raa[uid] = par[1 + self.dim_action:]
+        uid = np.triu_indices(self.d_action)
+        self.Raa[uid] = par[1 + self.d_action:]
         self.Raa.T[uid] = self.Raa[uid]
 
-        self.ra = par[1: 1 + self.dim_action]
+        self.ra = par[1: 1 + self.d_action]
         self.r0 = par[0]
 
         # check for negative definitness
@@ -148,7 +97,7 @@ class MORE:
                  kl_bound, ent_rate, **kwargs):
 
         self.func = func
-        self.dim_action = self.func.dim_action
+        self.d_action = self.func.d_action
 
         self.n_samples = n_samples
 
@@ -157,16 +106,16 @@ class MORE:
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.dim_action, cov0)
+            self.ctl = Policy(self.d_action, cov0)
         else:
-            self.ctl = Policy(self.dim_action, 100.0)
+            self.ctl = Policy(self.d_action, 100.0)
 
         if 'h0' in kwargs:
             self.h0 = kwargs.get('h0', False)
         else:
             self.h0 = 75.0
 
-        self.model = Model(self.dim_action)
+        self.model = Model(self.d_action)
 
         self.eta = np.array([1.0])
         self.omega = np.array([1.0])
@@ -219,58 +168,61 @@ class MORE:
 
         deta = eps + 0.5 * (2.0 * f.T @ F @ df_deta + f.T @ dF_deta @ f
                             - b.T @ invQ @ b - q_lgdt
-                            + f_lgdt + self.dim_action - (eta + omega) * np.trace(F @ invQ))
+                            + f_lgdt + self.d_action - (eta + omega) * np.trace(F @ invQ))
 
-        domega = - beta + 0.5 * (f_lgdt + self.dim_action)
+        domega = - beta + 0.5 * (f_lgdt + self.d_action)
 
         return np.hstack((deta, domega))
 
-    def run(self):
-        # update entropy bound
-        ent_bound = self.ent_rate * (self.ctl.entropy() + self.h0) - self.h0
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'rwrd': [],
+                  'kl': [],
+                  'ent': []}
 
-        # sample current policy
-        self.data = self.sample(self.n_samples)
-        rwrd = np.mean(self.data['r'])
+        for it in range(nb_iter):
+            # update entropy bound
+            ent_bound = self.ent_rate * (self.ctl.entropy() + self.h0) - self.h0
 
-        # fit quadratic model
-        self.model.fit(self.data['x'], self.data['r'])
+            # sample current policy
+            self.data = self.sample(self.n_samples)
+            rwrd = np.mean(self.data['r'])
 
-        # optimize dual
-        var = np.stack((100.0, 1000.0))
-        bnds = ((1e-8, 1e8), (1e-8, 1e8))
+            # fit quadratic model
+            self.model.fit(self.data['x'], self.data['r'])
 
-        res = sc.optimize.minimize(self.dual, var,
-                                   method='L-BFGS-B',
-                                   jac=self.grad,
-                                   args=(self.kl_bound, ent_bound,
-                                         self.ctl, self.model),
-                                   bounds=bnds)
-        self.eta = res.x[0]
-        self.omega = res.x[1]
+            # optimize dual
+            var = np.stack((100.0, 1000.0))
+            bnds = ((1e-8, 1e8), (1e-8, 1e8))
 
-        # update policy
-        pi = self.ctl.update(self.eta, self.omega, self.model)
+            res = sc.optimize.minimize(self.dual, var,
+                                       method='L-BFGS-B',
+                                       jac=self.grad,
+                                       args=(self.kl_bound, ent_bound,
+                                             self.ctl, self.model),
+                                       bounds=bnds)
+            self.eta = res.x[0]
+            self.omega = res.x[1]
 
-        # check kl
-        kl = self.ctl.kli(pi)
+            # update policy
+            pi = self.ctl.update(self.eta, self.omega, self.model)
 
-        self.ctl = pi
-        ent = self.ctl.entropy()
+            # check kl
+            kl = self.ctl.kli(pi)
 
-        return rwrd, kl, ent
+            self.ctl = pi
+            ent = self.ctl.entropy()
 
+            _trace['rwrd'].append(rwrd)
+            _trace['kl'].append(kl)
+            _trace['ent'].append(ent)
 
-if __name__ == "__main__":
+            if verbose:
+                print('it=', it,
+                      f'rwrd={rwrd:{5}.{4}}',
+                      f'kl={kl:{5}.{4}}',
+                      f'ent={ent:{5}.{4}}')
 
-    # np.random.seed(1337)
+            if ent < -3e2:
+                break
 
-    more = MORE(func=Sphere(dim_action=2), n_samples=1000,
-                kl_bound=0.05, ent_rate=0.99,
-                cov0=100.0, h0=75.0)
-
-    for it in range(1500):
-        rwrd, kl, ent = more.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-              f'kl={kl:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return _trace

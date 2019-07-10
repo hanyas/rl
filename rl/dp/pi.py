@@ -84,24 +84,3 @@ class PI:
             self.Q = np.zeros(self.sdim + self.adim)
 
             self.V, self.Q, self.A = self.infhor(self.V, self.Q, loop, discount)
-
-
-if __name__ == '__main__':
-    from rl.dp.envs import Grid
-    import matplotlib.pyplot as plt
-
-    env = Grid()
-
-    pi = PI(env)
-    pi.run(type='fin', horizon=25, loop=25)
-
-    ax = pi.env.world('Environment Finite Horizon')
-    pi.env.policy(pi.A[0, ...], ax)
-    plt.show()
-
-    pi = PI(env)
-    pi.run(type='inf', discount=0.9, loop=25)
-
-    ax = pi.env.world('Environment Infinite Horizon')
-    pi.env.policy(pi.A, ax)
-    plt.show()

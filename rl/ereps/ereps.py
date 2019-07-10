@@ -5,60 +5,11 @@ import scipy as sc
 from scipy import optimize
 from scipy import stats
 
-from sklearn.preprocessing import PolynomialFeatures
-
 import copy
 
 
 EXP_MAX = 700.0
 EXP_MIN = -700.0
-
-
-class Sphere:
-
-    def __init__(self, d_action):
-        self.d_action = d_action
-
-        M = np.random.randn(d_action, d_action)
-        tmp = M @ M.T
-        Q = tmp[np.nonzero(np.triu(tmp))]
-
-        q = 0.0 * np.random.rand(d_action)
-        q0 = 0.0 * np.random.rand()
-
-        self.param = np.hstack((q0, q, Q))
-        self.basis = PolynomialFeatures(degree=2)
-
-    def eval(self, x):
-        feat = self.basis.fit_transform(x)
-        return - np.dot(feat, self.param)
-
-
-class Rosenbrock:
-
-    def __init__(self, d_action):
-        self.d_action = d_action
-
-    def eval(self, x):
-        return - np.sum(100.0 * (x[:, 1:] - x[:, :-1] ** 2.0) ** 2.0 +
-                        (1 - x[:, :-1]) ** 2.0, axis=-1)
-
-
-class Styblinski:
-    def __init__(self, d_action):
-        self.d_action = d_action
-
-    def eval(self, x):
-        return - 0.5 * np.sum(x**4.0 - 16.0 * x**2 + 5 * x, axis=-1)
-
-
-class Rastrigin:
-    def __init__(self, d_action):
-        self.d_action = d_action
-
-    def eval(self, x):
-        return - (10.0 * self.d_action +
-                  np.sum(x**2 - 10.0 * np.cos(2.0 * np.pi * x), axis=-1))
 
 
 class Policy:
@@ -173,59 +124,52 @@ class EREPS:
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
 
-    def run(self):
-        self.data = self.sample(self.n_episodes)
-        rwrd = np.mean(self.data['r'])
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'rwrd': [],
+                  'kls': [], 'kli': [], 'klm': [],
+                  'ent': []}
 
-        res = sc.optimize.minimize(self.dual, np.array([1.0]),
-                                   method='SLSQP',
-                                   jac=self.grad,
-                                   # jac=grad(self.dual),
-                                   args=(
-                                       self.kl_bound,
-                                       self.data['r']),
-                                   bounds=((1e-8, 1e8),))
+        for it in range(nb_iter):
+            self.data = self.sample(self.n_episodes)
+            rwrd = np.mean(self.data['r'])
 
-        self.eta = res.x
-        self.w, _ = self.weights(self.data['r'], self.eta)
+            res = sc.optimize.minimize(self.dual, np.array([1.0]),
+                                       method='SLSQP',
+                                       jac=self.grad,
+                                       # jac=grad(self.dual),
+                                       args=(
+                                           self.kl_bound,
+                                           self.data['r']),
+                                       bounds=((1e-8, 1e8),))
 
-        # pol = self.ctl.wml(self.data['x'], self.w)
-        pol = self.ctl.wmap(self.data['x'], self.w, eps=self.kl_bound)
+            self.eta = res.x
+            self.w, _ = self.weights(self.data['r'], self.eta)
 
-        kls = self.kl_samples(self.w)
-        kli = self.ctl.kli(pol)
-        klm = self.ctl.klm(pol)
+            # pol = self.ctl.wml(self.data['x'], self.w)
+            pol = self.ctl.wmap(self.data['x'], self.w, eps=self.kl_bound)
 
-        self.ctl = pol
-        ent = self.ctl.entropy()
+            kls = self.kl_samples(self.w)
+            kli = self.ctl.kli(pol)
+            klm = self.ctl.klm(pol)
 
-        return rwrd, kls, kli, klm, ent
+            self.ctl = pol
+            ent = self.ctl.entropy()
 
+            _trace['rwrd'].append(rwrd)
+            _trace['kls'].append(kls)
+            _trace['kli'].append(kli)
+            _trace['klm'].append(klm)
+            _trace['ent'].append(ent)
 
-if __name__ == "__main__":
+            if verbose:
+                print('it=', it,
+                      f'rwrd={rwrd:{5}.{4}}',
+                      f'kls={kls:{5}.{4}}',
+                      f'kli={kli:{5}.{4}}',
+                      f'klm={klm:{5}.{4}}',
+                      f'ent={ent:{5}.{4}}')
 
-    ereps = EREPS(func=Sphere(d_action=25),
-                  n_episodes=500, kl_bound=0.1,
-                  cov0=100.0)
+            if ent < -3e2:
+                break
 
-    # ereps = EREPS(func=Rosenbrock(d_action=3),
-    #               n_episodes=1000, kl_bound=0.05,
-    #               cov0=100.0)
-    #
-    # ereps = EREPS(func=Styblinski(d_action=3),
-    #               n_episodes=1000, kl_bound=0.05,
-    #               cov0=100.0)
-    #
-    # ereps = EREPS(func=Rastrigin(d_action=3),
-    #               n_episodes=1000, kl_bound=0.05,
-    #               cov0=100.0)
-
-    for it in range(250):
-        rwrd, kls, kli, klm, ent = ereps.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
-
-        if ent < -3e2:
-            break
+        return _trace

@@ -1,9 +1,7 @@
 import autograd.numpy as np
-from autograd import grad
 
 import scipy as sc
 from scipy import optimize
-from scipy import stats
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
@@ -13,24 +11,6 @@ import copy
 
 EXP_MAX = 700.0
 EXP_MIN = -700.0
-
-
-class Sphere:
-
-    def __init__(self, d_cntxt, d_action):
-        self.d_cntxt = d_cntxt
-        self.d_action = d_action
-
-        M = np.random.randn(self.d_action, self.d_action)
-        M = 0.5 * (M + M.T)
-        self.Q = M @ M.T
-
-    def context(self, n_episodes):
-        return np.random.uniform(-1.0, 1.0, size=(n_episodes, self.d_cntxt))
-
-    def eval(self, x, c):
-        diff = x - c
-        return - np.einsum('nk,kh,nh->n', diff, self.Q, diff)
 
 
 class Policy:
@@ -231,53 +211,57 @@ class CREPS:
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
 
-    def run(self):
-        self.data = self.sample(self.n_episodes)
-        rwrd = np.mean(self.data['r'])
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'rwrd': [],
+                  'kls': [], 'kli': [], 'klm': [],
+                  'ent': []}
 
-        self.vfeatures = self.vfunc.features(self.data['c'])
+        for it in range(nb_iter):
+            self.data = self.sample(self.n_episodes)
+            rwrd = np.mean(self.data['r'])
 
-        res = sc.optimize.minimize(self.dual,
-                                   np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
-                                   method='L-BFGS-B',
-                                   jac=self.grad,
-                                   # jac=grad(self.dual),
-                                   args=(
-                                       self.kl_bound,
-                                       self.data['r'],
-                                       self.vfeatures),
-                                   bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+            self.vfeatures = self.vfunc.features(self.data['c'])
 
-        self.eta, self.vfunc.omega = res.x[0], res.x[1:]
-        self.w, _, _ = self.weights(self.eta, self.vfunc.omega,
-                                    self.data['r'], self.vfeatures)
+            res = sc.optimize.minimize(self.dual,
+                                       np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
+                                       method='L-BFGS-B',
+                                       jac=self.grad,
+                                       # jac=grad(self.dual),
+                                       args=(
+                                           self.kl_bound,
+                                           self.data['r'],
+                                           self.vfeatures),
+                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
 
-        # pol = self.ctl.wml(self.data['c'], self.data['x'], self.w, self.preg)
-        pol = self.ctl.wmap(self.data['c'], self.data['x'], self.w, eps=self.kl_bound)
+            self.eta, self.vfunc.omega = res.x[0], res.x[1:]
+            self.w, _, _ = self.weights(self.eta, self.vfunc.omega,
+                                        self.data['r'], self.vfeatures)
 
-        kls = self.kl_samples(self.w)
-        kli = self.ctl.kli(pol, self.data['c'])
-        klm = self.ctl.klm(pol, self.data['c'])
+            # pol = self.ctl.wml(self.data['c'], self.data['x'], self.w, self.preg)
+            pol = self.ctl.wmap(self.data['c'], self.data['x'], self.w, eps=self.kl_bound)
 
-        self.ctl = pol
-        ent = self.ctl.entropy()
+            kls = self.kl_samples(self.w)
+            kli = self.ctl.kli(pol, self.data['c'])
+            klm = self.ctl.klm(pol, self.data['c'])
 
-        return rwrd, kls, kli, klm, ent
+            self.ctl = pol
+            ent = self.ctl.entropy()
 
+            _trace['rwrd'].append(rwrd)
+            _trace['kls'].append(kls)
+            _trace['kli'].append(kli)
+            _trace['klm'].append(klm)
+            _trace['ent'].append(ent)
 
-if __name__ == "__main__":
+            if verbose:
+                print('it=', it,
+                      f'rwrd={rwrd:{5}.{4}}',
+                      f'kls={kls:{5}.{4}}',
+                      f'kli={kli:{5}.{4}}',
+                      f'klm={klm:{5}.{4}}',
+                      f'ent={ent:{5}.{4}}')
 
-    # np.random.seed(1337)
+            if ent < -3e2:
+                break
 
-    creps = CREPS(func=Sphere(d_cntxt=3, d_action=3),
-                  n_episodes=100, kl_bound=0.1,
-                  vdgr=2, pdgr=1,
-                  vreg=1e-16, preg=1e-16,
-                  cov0=100.0)
-
-    for it in range(250):
-        rwrd, kls, kli, klm, ent = creps.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return _trace
