@@ -1,7 +1,7 @@
 import numpy as np
 from cluster_work import ClusterWork
 
-from rl.rl.acreps import ACREPS
+from rl.acreps import ACREPS
 
 class MyExperiment(ClusterWork):
 

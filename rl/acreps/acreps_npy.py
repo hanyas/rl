@@ -475,7 +475,7 @@ class ACREPS:
                   'ent': []}
 
         for it in range(nb_iter):
-            _, eval = self.evaluate(self.n_rollouts)
+            # _, eval = self.evaluate(self.n_rollouts)
 
             self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
             self.vfeatures = self.featurize(self.data)
@@ -575,8 +575,5 @@ class ACREPS:
                       f'kli={kli:{5}.{4}}',
                       f'klm={klm:{5}.{4}}',
                       f'ent={ent:{5}.{4}}')
-
-            if ent < -3e2:
-                break
 
         return _trace

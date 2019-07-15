@@ -376,7 +376,4 @@ class ACREPS:
                       f'klm={kl:{5}.{4}}',
                       f'ent={ent:{5}.{4}}')
 
-            if ent < -3e2:
-                break
-
         return _trace

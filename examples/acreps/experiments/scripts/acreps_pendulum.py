@@ -1,12 +1,12 @@
 import numpy as np
 from cluster_work import ClusterWork
 
-from rl.rl.acreps import ACREPS
+from rl.acreps import ACREPS
 
 class MyExperiment(ClusterWork):
 
     _default_params = {
-        'n_samples': 5000,
+        'n_samples': 3000,
         'n_keep': 0,
         'n_rollouts': 25,
         'kl_bound': 0.1,
@@ -51,8 +51,7 @@ class MyExperiment(ClusterWork):
                              s_band=s_band, sa_band=sa_band)
 
     def iterate(self, config=None, rep=0, n=0):
-        self.acreps.run(nb_iter=1, verbose=True)
-        return {}
+        return self.acreps.run(nb_iter=1, verbose=True)
 
 
 if __name__ == "__main__":
