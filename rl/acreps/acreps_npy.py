@@ -469,136 +469,114 @@ class ACREPS:
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
 
-    def run(self):
-        _, eval = self.evaluate(self.n_rollouts)
+    def run(self, nb_iter=10, verbose=False):
+        _trace = {'rwrd': [],
+                  'kls': [], 'kli': [], 'klm': [],
+                  'ent': []}
 
-        self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
-        self.vfeatures = self.featurize(self.data)
+        for it in range(nb_iter):
+            _, eval = self.evaluate(self.n_rollouts)
 
-        # self.qfunc.theta, self.rollouts, self.data = self.lstd(self.rollouts, gamma=self.discount, lmbda=self.lmbda)
-        # self.targets = self.qfunc.values(self.data['xn'], self.data['un'])
+            self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
+            self.vfeatures = self.featurize(self.data)
 
-        # self.targets = self.mc(self.data, self.discount)
+            # self.qfunc.theta, self.rollouts, self.data = self.lstd(self.rollouts, gamma=self.discount, lmbda=self.lmbda)
+            # self.targets = self.qfunc.values(self.data['xn'], self.data['un'])
 
-        self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
-                                self.discount, self.lmbda)
+            # self.targets = self.mc(self.data, self.discount)
 
-        res = sc.optimize.minimize(self.dual,
-                                   np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
-                                   # np.hstack((1.0, self.vfunc.omega)),
-                                   method='L-BFGS-B',
-                                   jac=grad(self.dual),
-                                   args=(
-                                       self.kl_bound,
-                                       self.vfeatures,
-                                       self.targets),
-                                   bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+            self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
+                                    self.discount, self.lmbda)
 
-        self.eta, self.vfunc.omega = res.x[0], res.x[1:]
+            res = sc.optimize.minimize(self.dual,
+                                       np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
+                                       # np.hstack((1.0, self.vfunc.omega)),
+                                       method='L-BFGS-B',
+                                       jac=grad(self.dual),
+                                       args=(
+                                           self.kl_bound,
+                                           self.vfeatures,
+                                           self.targets),
+                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
 
-        # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
-        # for _ in range(250):
-        #     res = sc.optimize.minimize(self.dual_eta,
-        #                                self.eta,
-        #                                method='SLSQP',
-        #                                jac=grad(self.dual_eta),
-        #                                args=(
-        #                                    self.vfunc.omega,
-        #                                    self.kl_bound,
-        #                                    self.vfeatures,
-        #                                    self.targets),
-        #                                bounds=((1e-8, 1e8),),
-        #                                options={'maxiter': 5})
-        #     # print(res)
-        #     #
-        #     # check = sc.optimize.check_grad(self.dual_eta,
-        #     #                                self.grad_eta, res.x,
-        #     #                                self.vfunc.omega,
-        #     #                                self.kl_bound,
-        #     #                                self.vfeatures,
-        #     #                                self.targets)
-        #     # print('Eta Error', check)
-        #
-        #     self.eta = res.x
-        #
-        #     res = sc.optimize.minimize(self.dual_omega,
-        #                                self.vfunc.omega,
-        #                                method='BFGS',
-        #                                jac=grad(self.dual_omega),
-        #                                args=(
-        #                                    self.eta,
-        #                                    self.vfeatures,
-        #                                    self.targets),
-        #                                options={'maxiter': 100})
-        #
-        #     # print(res)
-        #     #
-        #     # check = sc.optimize.check_grad(self.dual_omega,
-        #     #                                self.grad_omega, res.x,
-        #     #                                self.eta,
-        #     #                                self.vfeatures,
-        #     #                                self.targets)
-        #     # print('Omega Error', check)
-        #
-        #     self.vfunc.omega = res.x
+            self.eta, self.vfunc.omega = res.x[0], res.x[1:]
 
-        self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
+            # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
+            # for _ in range(250):
+            #     res = sc.optimize.minimize(self.dual_eta,
+            #                                self.eta,
+            #                                method='SLSQP',
+            #                                jac=grad(self.dual_eta),
+            #                                args=(
+            #                                    self.vfunc.omega,
+            #                                    self.kl_bound,
+            #                                    self.vfeatures,
+            #                                    self.targets),
+            #                                bounds=((1e-8, 1e8),),
+            #                                options={'maxiter': 5})
+            #     # print(res)
+            #     #
+            #     # check = sc.optimize.check_grad(self.dual_eta,
+            #     #                                self.grad_eta, res.x,
+            #     #                                self.vfunc.omega,
+            #     #                                self.kl_bound,
+            #     #                                self.vfeatures,
+            #     #                                self.targets)
+            #     # print('Eta Error', check)
+            #
+            #     self.eta = res.x
+            #
+            #     res = sc.optimize.minimize(self.dual_omega,
+            #                                self.vfunc.omega,
+            #                                method='BFGS',
+            #                                jac=grad(self.dual_omega),
+            #                                args=(
+            #                                    self.eta,
+            #                                    self.vfeatures,
+            #                                    self.targets),
+            #                                options={'maxiter': 100})
+            #
+            #     # print(res)
+            #     #
+            #     # check = sc.optimize.check_grad(self.dual_omega,
+            #     #                                self.grad_omega, res.x,
+            #     #                                self.eta,
+            #     #                                self.vfeatures,
+            #     #                                self.targets)
+            #     # print('Omega Error', check)
+            #
+            #     self.vfunc.omega = res.x
 
-        pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
-        # pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
+            self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
 
-        kls = self.kl_samples(self.w)
-        kli = self.ctl.kli(pol, self.data['x'])
-        klm = self.ctl.klm(pol, self.data['x'])
+            pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
+            # pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
 
-        self.ctl = pol
-        ent = self.ctl.entropy()
+            kls = self.kl_samples(self.w)
+            kli = self.ctl.kli(pol, self.data['x'])
+            klm = self.ctl.klm(pol, self.data['x'])
 
-        rwrd = np.mean(self.data['r'])
-        # rwrd = np.mean(eval['r'])
+            self.ctl = pol
+            ent = self.ctl.entropy()
 
-        return rwrd, kls, kli, klm, ent
+            rwrd = np.mean(self.data['r'])
+            # rwrd = np.mean(eval['r'])
 
+            _trace['rwrd'].append(rwrd)
+            _trace['kls'].append(kls)
+            _trace['kli'].append(kli)
+            _trace['klm'].append(klm)
+            _trace['ent'].append(ent)
 
-if __name__ == "__main__":
+            if verbose:
+                print('it=', it,
+                      f'rwrd={rwrd:{5}.{4}}',
+                      f'kls={kls:{5}.{4}}',
+                      f'kli={kli:{5}.{4}}',
+                      f'klm={klm:{5}.{4}}',
+                      f'ent={ent:{5}.{4}}')
 
-    import gym
-    import lab
+            if ent < -3e2:
+                break
 
-    np.random.seed(0)
-    env = gym.make('Pendulum-v0')
-    env._max_episode_steps = 200
-    env.seed(0)
-
-    acreps = ACREPS(env=env,
-                    n_samples=3000, n_keep=0, n_rollouts=20,
-                    kl_bound=0.1, discount=0.98, lmbda=0.95,
-                    vreg=1e-12, preg=1e-12, cov0=8.0,
-                    n_vfeat=75, n_pfeat=75,
-                    s_band=np.array([0.5, 0.5, 4.0]),
-                    sa_band=np.array([0.5, 0.5, 4.0, 1.0]))
-
-    for it in range(15):
-        rwrd, kls, kli, klm, ent = acreps.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
-
-    # # np.random.seed(0)
-    # env = gym.make('Linear-v0')
-    # env._max_episode_steps = 500
-    # # env.seed(0)
-    #
-    # acreps = ACREPS(env=env,
-    #                 n_samples=2500, n_keep=0, n_rollouts=25,
-    #                 kl_bound=0.1, discount=0.95, lmbda=0.95,
-    #                 vreg=1e-32, preg=1e-32, cov0=25.0,
-    #                 vdgr=2, pdgr=1)
-    #
-    # for it in range(15):
-    #     rwrd, kls, kli, klm, ent = acreps.run()
-    #
-    #     print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-    #           f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-    #           f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return _trace

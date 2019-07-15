@@ -51,11 +51,7 @@ class MyExperiment(ClusterWork):
                              s_band=s_band, sa_band=sa_band)
 
     def iterate(self, config=None, rep=0, n=0):
-        rwrd, kls, kli, klm, ent = self.acreps.run()
-
-        print(f'rwrd={rwrd:{5}.{4}}',
-              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        self.acreps.run(nb_iter=1, verbose=True)
         return {}
 
 

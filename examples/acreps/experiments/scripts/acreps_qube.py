@@ -10,15 +10,15 @@ class MyExperiment(ClusterWork):
         'n_keep': 0,
         'n_rollouts': 25,
         'kl_bound': 0.1,
-        'discount': 0.99,
+        'discount': 0.98,
         'lmbda': 0.95,
         'vreg': 1e-16,
         'preg': 1e-16,
         'cov0': 100.0,
         'n_vfeat': 250,
         'n_pfeat': 250,
-        's_band': np.array([0.5, 0.5, 0.5, 12.5, 12.5]),
-        'sa_band': np.array([0.5, 0.5, 0.5, 12.5, 12.5, 2.5]),
+        's_band': np.array([1.57, 0.5, 0.5, 15.0, 20.0]),
+        'sa_band': np.array([1.57, 0.5, 0.5 ,15.0, 20.0, 2.5]),
     }
 
     def reset(self, config=None, rep=0):
@@ -39,7 +39,7 @@ class MyExperiment(ClusterWork):
         import gym
 
         np.random.seed(self._seed)
-        env = gym.make('Cartpole-v1')
+        env = gym.make('Qube-v1')
         env._max_episode_steps = 500
         env.seed(self._seed)
 
@@ -51,11 +51,7 @@ class MyExperiment(ClusterWork):
                              s_band=s_band, sa_band=sa_band)
 
     def iterate(self, config=None, rep=0, n=0):
-        rwrd, kls, kli, klm, ent = self.acreps.run()
-
-        print(f'rwrd={rwrd:{5}.{4}}',
-              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        self.acreps.run(nb_iter=1, verbose=True)
         return {}
 
 

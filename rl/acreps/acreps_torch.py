@@ -327,62 +327,56 @@ class ACREPS:
         w = w / torch.mean(w, dim=0)
         return torch.mean(w * torch.log(w), dim=0).numpy().squeeze()
 
-    def run(self):
-        # _, eval = self.evaluate(self.n_rollouts, self.n_steps)
+    def run(self, nb_iter=10, verbose=False):
+        _trace = {'rwrd': [],
+                  'dual': [], 'ploss': [], 'kl': [],
+                  'ent': []}
 
-        self.rollouts, self.data = self.sample(self.n_samples)
+        for it in range(nb_iter):
+            # _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
-        self.vfeatures = self.dual.features(self.data['x'])
-        self.mvfeatures = torch.mean(self.vfeatures, dim=0)
+            self.rollouts, self.data = self.sample(self.n_samples)
 
-        self.targets = self.dual.gae(self.vfeatures, self.data)
+            self.vfeatures = self.dual.features(self.data['x'])
+            self.mvfeatures = torch.mean(self.vfeatures, dim=0)
 
-        # reset parameters
-        self.dual.vfunc = RandomFourierNet(self.n_vfeat, 1)
-        self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
+            self.targets = self.dual.gae(self.vfeatures, self.data)
 
-        dual = self.dual.minimize(self.vfeatures, self.mvfeatures,
-                                  self.targets)
+            # reset parameters
+            self.dual.vfunc = RandomFourierNet(self.n_vfeat, 1)
+            self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
 
-        self.advantage = self.targets - self.dual.values(self.vfeatures)
-        self.weights = torch.exp(torch.clamp((self.advantage - torch.max(self.advantage)) /
-                                             self.dual.eta(), EXP_MIN, EXP_MAX))
-        kl = self.kl_samples(self.weights)
+            dual = self.dual.minimize(self.vfeatures, self.mvfeatures,
+                                      self.targets)
 
-        self.pfeatures = self.ctl.features(self.data['x'])
-        ploss = self.ctl.minimize(self.data['u'], self.pfeatures, self.weights)
+            self.advantage = self.targets - self.dual.values(self.vfeatures)
+            self.weights = torch.exp(torch.clamp((self.advantage - torch.max(self.advantage)) /
+                                                 self.dual.eta(), EXP_MIN, EXP_MAX))
+            kl = self.kl_samples(self.weights)
 
-        ent = self.ctl.entropy()
+            self.pfeatures = self.ctl.features(self.data['x'])
+            ploss = self.ctl.minimize(self.data['u'], self.pfeatures, self.weights)
 
-        rwrd = torch.mean(self.data['r']).numpy()
-        # rwrd = torch.mean(eval['r']).numpy()
+            ent = self.ctl.entropy()
 
-        return rwrd, dual, ploss, kl, ent
+            rwrd = torch.mean(self.data['r']).numpy()
+            # rwrd = torch.mean(eval['r']).numpy()
 
+            _trace['rwrd'].append(rwrd)
+            _trace['dual'].append(dual)
+            _trace['ploss'].append(ploss)
+            _trace['klm'].append(kl)
+            _trace['ent'].append(ent)
 
-if __name__ == "__main__":
+            if verbose:
+                print('it=', it,
+                      f'rwrd={rwrd:{5}.{4}}',
+                      f'dual={dual:{5}.{4}}',
+                      f'ploss={ploss:{5}.{4}}',
+                      f'klm={kl:{5}.{4}}',
+                      f'ent={ent:{5}.{4}}')
 
-    import gym
-    import lab
+            if ent < -3e2:
+                break
 
-    torch.set_num_threads(4)
-
-    np.random.seed(0)
-    env = gym.make('Pendulum-v0')
-    env._max_episode_steps = 500
-    env.seed(0)
-
-    torch.manual_seed(0)
-    random.seed(0)
-
-    acreps = ACREPS(env=env,
-                    n_samples=5000, n_keep=0, n_rollouts=25,
-                    kl_bound=0.1, discount=0.98, lmbda=0.95,
-                    n_vfeat=75, n_pfeat=75,
-                    cov0=4.0, band=np.array([0.5, 0.5, 4.0]))
-
-    for it in range(15):
-        rwrd, dual, ploss, kl, ent = acreps.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}', f'dual={dual:{5}.{4}}',
-              f'ploss={ploss:{5}.{4}}', f'kl={kl:{5}.{4}}', f'ent={ent:{5}.{4}}')
+        return _trace
