@@ -7,7 +7,6 @@ from scipy import stats
 
 import copy
 
-
 EXP_MAX = 700.0
 EXP_MIN = -700.0
 

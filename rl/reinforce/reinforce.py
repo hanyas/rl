@@ -123,49 +123,34 @@ class REINFORCE:
 
         return _b
 
-    def run(self):
-        self.rollouts = self.sample(n_samples=self.n_samples)
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'rwrd': []}
 
-        _return = []
-        for roll in self.rollouts:
-            _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((len(roll['r']),))[:-1])))
-            _return.append(np.sum(_disc * roll['r']))
+        for it in range(nb_iter):
+            self.rollouts = self.sample(n_samples=self.n_samples)
 
-        _grad = []
-        for roll in self.rollouts:
-            _g = self.ctl.grad(roll['x'], roll['u'])
-            _grad.append(_g)
+            _return = []
+            for roll in self.rollouts:
+                _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((len(roll['r']),))[:-1])))
+                _return.append(np.sum(_disc * roll['r']))
 
-        _baseline = self.baseline(_return, _grad)
+            _grad = []
+            for roll in self.rollouts:
+                _g = self.ctl.grad(roll['x'], roll['u'])
+                _grad.append(_g)
 
-        _wgrad = np.zeros((self.ctl.n_feat, ))
-        for r, g in zip(_return, _grad):
-            _wgrad += np.sum(g, axis=0) * (r - _baseline) / len(_return)
+            _baseline = self.baseline(_return, _grad)
 
-        self.ctl.K += self.alpha * _wgrad
+            _wgrad = np.zeros((self.ctl.n_feat, ))
+            for r, g in zip(_return, _grad):
+                _wgrad += np.sum(g, axis=0) * (r - _baseline) / len(_return)
 
-        return np.mean(_return)
+            self.ctl.K += self.alpha * _wgrad
 
+            _trace['rwrd'].append(np.mean(_return))
 
-if __name__ == "__main__":
-    import gym
-    import lab
+            if verbose:
+                print('it=', it,
+                      f'ret={np.mean(_return):{5}.{4}}')
 
-    import matplotlib.pyplot as plt
-
-    env = gym.make('LQR-v0')
-    env._max_episode_steps = 100
-
-    reinforce = REINFORCE(env, n_samples=2500, discount=0.995,
-                          alpha=1e-5, pdict={'type': 'poly', 'degree': 1})
-
-    for it in range(15):
-        ret = reinforce.run()
-        print('it=', it, f'ret={ret:{5}.{4}}')
-
-    rollouts = reinforce.sample(2500, stoch=False)
-
-    fig = plt.figure()
-    for r in rollouts:
-        plt.plot(r['x'][:, 0])
-    plt.show()
+        return _trace

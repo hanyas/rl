@@ -112,54 +112,38 @@ class GPOMDP:
 
         return _b
 
-    def run(self):
-        self.rollouts = self.sample(n_episodes=self.n_episodes, n_steps=self.n_steps)
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'ret': []}
 
-        _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((self.n_steps,))[:-1])))
+        for it in range(nb_iter):
+            self.rollouts = self.sample(n_episodes=self.n_episodes, n_steps=self.n_steps)
 
-        _reward = []
-        for roll in self.rollouts:
-            _reward.append(_disc * roll['r'])
+            _disc = np.hstack((1.0, np.cumprod(self.discount * np.ones((self.n_steps,))[:-1])))
 
-        _grad = []
-        for roll in self.rollouts:
-            _g = self.ctl.grad(roll['x'], roll['u'])
-            _grad.append(_g)
+            _reward = []
+            for roll in self.rollouts:
+                _reward.append(_disc * roll['r'])
 
-        _baseline = self.baseline(_reward, _grad)
+            _grad = []
+            for roll in self.rollouts:
+                _g = self.ctl.grad(roll['x'], roll['u'])
+                _grad.append(_g)
 
-        _wgrad = np.zeros((self.ctl.n_feat, ))
-        for r, g in zip(_reward, _grad):
-            _wgrad += np.sum(np.cumsum(g, axis=0) * (r[:, np.newaxis] - _baseline), axis=0) / len(_reward)
+            _baseline = self.baseline(_reward, _grad)
 
-        self.ctl.K += self.alpha * _wgrad
+            _wgrad = np.zeros((self.ctl.n_feat, ))
+            for r, g in zip(_reward, _grad):
+                _wgrad += np.sum(np.cumsum(g, axis=0) * (r[:, np.newaxis] - _baseline), axis=0) / len(_reward)
 
-        ret = 0.0
-        for r in _reward:
-            ret += r.sum() / len(_reward)
+            self.ctl.K += self.alpha * _wgrad
 
-        return ret
+            ret = 0.0
+            for r in _reward:
+                ret += r.sum() / len(_reward)
 
+            _trace['ret'].append(ret)
 
-if __name__ == "__main__":
-    import gym
-    import lab
+            if verbose:
+                print('it=', it, f'ret={ret:{5}.{4}}')
 
-    import matplotlib.pyplot as plt
-
-    env = gym.make('LQR-v0')
-    env._max_episode_steps = 100
-
-    gpomdp = GPOMDP(env, n_episodes=25, n_steps=100,
-                       discount=0.995, alpha=1e-5)
-
-    for it in range(15):
-        ret = gpomdp.run()
-        print('it=', it, f'ret={ret:{5}.{4}}')
-
-    rollouts = gpomdp.sample(25, 100, stoch=False)
-
-    fig = plt.figure()
-    for r in rollouts:
-        plt.plot(r['x'][:, 0])
-    plt.show()
+        return _trace

@@ -5,6 +5,7 @@
 # @Author: Hany Abdulsamad
 # @Contact: hany@robot-learning.de
 
+
 from .episodic.testing import Sphere
 from .episodic.testing import Rosenbrock
 from .episodic.testing import Rastrigin
@@ -13,3 +14,5 @@ from .episodic.testing import Styblinski
 from .discrete.grid import Grid
 
 from .contextual.testing import CSphere
+
+from .control.lqr.lqr import LQR

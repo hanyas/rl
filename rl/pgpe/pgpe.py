@@ -89,65 +89,48 @@ class PGPE:
 
         return rollouts
 
-    def run(self):
-        self.rollouts = self.sample(n_episodes=self.n_episodes)
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'ret': []}
 
-        _reward = []
-        for roll in self.rollouts:
-            _gamma = self.discount * np.ones((len(roll['r']), ))
-            _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
-            _reward.append(np.sum(_disc * roll['r']))
+        for it in range(nb_iter):
+            self.rollouts = self.sample(n_episodes=self.n_episodes)
 
-        _meanr = np.mean(_reward)
+            _return = []
+            for roll in self.rollouts:
+                _gamma = self.discount * np.ones((len(roll['r']), ))
+                _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
+                _return.append(np.sum(_disc * roll['r']))
 
-        _par, _reward = [], []
-        for n in range(self.n_episodes):
-            # perturbed policy
-            _pert = self.ctl.perturb()
+            _meanr = np.mean(_return)
 
-            # return of perturbed policy
-            _roll = self.sample(n_episodes=1, ctl=_pert)
+            _par, _return = [], []
+            for n in range(self.n_episodes):
+                # perturbed policy
+                _pert = self.ctl.perturb()
 
-            _gamma = self.discount * np.ones((len(_roll[-1]['r']), ))
-            _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
-            _reward.append(np.sum(_disc * _roll[-1]['r']))
-            _par.append(_pert.K)
+                # return of perturbed policy
+                _roll = self.sample(n_episodes=1, ctl=_pert)
 
-        _sigma = np.sqrt(np.diag(self.ctl.cov))
-        _T = np.squeeze(np.asarray(_par) - self.ctl.K)
-        _S = (np.square(_T) - _sigma**2) / _sigma
+                _gamma = self.discount * np.ones((len(_roll[-1]['r']), ))
+                _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
+                _return.append(np.sum(_disc * _roll[-1]['r']))
+                _par.append(_pert.K)
 
-        _b = np.mean(_reward)
-        _r = np.asarray(_reward) - _b
+            _sigma = np.sqrt(np.diag(self.ctl.cov))
+            _T = np.squeeze(np.asarray(_par) - self.ctl.K)
+            _S = (np.square(_T) - _sigma**2) / _sigma
 
-        # update
-        _mult = 1. / self.n_episodes
-        self.ctl.K += self.alpha * _mult * _r @ _T
-        self.ctl.cov += np.diag((self.beta * _mult * _r @ _S))**2
+            _b = np.mean(_return)
+            _r = np.asarray(_return) - _b
 
-        return _meanr
+            # update
+            _mult = 1. / self.n_episodes
+            self.ctl.K += self.alpha * _mult * _r @ _T
+            self.ctl.cov += np.diag((self.beta * _mult * _r @ _S))**2
 
+            _trace['ret'].append(_meanr)
 
-if __name__ == "__main__":
-    import gym
-    import lab
+            if verbose:
+                print('it=', it, f'ret={_meanr:{5}.{4}}')
 
-    import matplotlib.pyplot as plt
-
-    env = gym.make('LQR-v0')
-    env._max_episode_steps = 100
-
-    fdpg = PGPE(env, n_episodes=100, discount=0.995,
-                alpha=1e-6, beta=1e-8,
-                pdict={'type': 'poly', 'degree': 1, 'cov0': 0.025})
-
-    for it in range(15):
-        ret = fdpg.run()
-        print('it=', it, f'ret={ret:{5}.{4}}')
-
-    rollouts = fdpg.sample(25)
-
-    fig = plt.figure()
-    for r in rollouts:
-        plt.plot(r['x'][:, 0])
-    plt.show()
+        return _trace

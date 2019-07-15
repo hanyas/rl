@@ -88,64 +88,48 @@ class FDPG:
 
         return rollouts
 
-    def run(self):
-        self.rollouts = self.sample(n_episodes=self.n_episodes)
+    def run(self, nb_iter=100, verbose=False):
+        _trace = {'ret': []}
 
-        _reward = []
-        for roll in self.rollouts:
-            _gamma = self.discount * np.ones((len(roll['r']), ))
-            _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
-            _reward.append(np.sum(_disc * roll['r']))
+        for it in range(nb_iter):
+            self.rollouts = self.sample(n_episodes=self.n_episodes)
 
-        _meanr = np.mean(_reward)
+            _return = []
+            for roll in self.rollouts:
+                _gamma = self.discount * np.ones((len(roll['r']), ))
+                _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
+                _return.append(np.sum(_disc * roll['r']))
 
-        _par, _reward = [], []
-        for n in range(self.n_episodes):
-            # perturbed policy
-            _pert = self.ctl.perturb()
+            _meanr = np.mean(_return)
 
-            # return of perturbed policy
-            _roll = self.sample(n_episodes=1, ctl=_pert)
+            _par, _return = [], []
+            for n in range(self.n_episodes):
+                # perturbed policy
+                _pert = self.ctl.perturb()
 
-            _gamma = self.discount * np.ones((len(_roll[-1]['r']), ))
-            _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
-            _reward.append(np.sum(_disc * _roll[-1]['r']))
-            _par.append(_pert.K)
+                # return of perturbed policy
+                _roll = self.sample(n_episodes=1, ctl=_pert)
 
-        # param diff
-        _dpar = np.squeeze(np.asarray(_par) - self.ctl.K)
+                _gamma = self.discount * np.ones((len(_roll[-1]['r']), ))
+                _disc = np.hstack((1.0, np.cumprod(_gamma[:-1])))
+                _return.append(np.sum(_disc * _roll[-1]['r']))
+                _par.append(_pert.K)
 
-        # rwrd diff
-        _dr = np.asarray(_reward) - _meanr
+            # param diff
+            _dpar = np.squeeze(np.asarray(_par) - self.ctl.K)
 
-        # gradient
-        _grad = np.linalg.inv(_dpar.T @ _dpar + 1e-8 * np.eye(self.ctl.n_feat)) @ _dpar.T @ _dr
+            # rwrd diff
+            _dr = np.asarray(_return) - _meanr
 
-        # update
-        self.ctl.K += self.alpha * _grad / self.n_episodes
+            # gradient
+            _grad = np.linalg.inv(_dpar.T @ _dpar + 1e-8 * np.eye(self.ctl.n_feat)) @ _dpar.T @ _dr
 
-        return _meanr
+            # update
+            self.ctl.K += self.alpha * _grad / self.n_episodes
 
+            _trace['ret'].append(_meanr)
 
-if __name__ == "__main__":
-    import gym
-    import lab
+            if verbose:
+                print('it=', it, f'ret={_meanr:{5}.{4}}')
 
-    import matplotlib.pyplot as plt
-
-    env = gym.make('LQR-v0')
-    env._max_episode_steps = 100
-
-    fdpg = FDPG(env, n_episodes=100, discount=0.995, alpha=1e-4,
-                pdict={'type': 'poly', 'degree': 1, 'cov0': 0.01})
-
-    for it in range(15):
-        ret = fdpg.run()
-        print('it=', it, f'ret={ret:{5}.{4}}')
-
-    rollouts = fdpg.sample(25)
-
-    fig = plt.figure()
-    for r in rollouts:
-        plt.plot(r['x'][:, 0])
-    plt.show()
+        return _trace

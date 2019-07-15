@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-
 import autograd.numpy as np
 from autograd import grad, jacobian
 

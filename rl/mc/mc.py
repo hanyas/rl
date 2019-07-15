@@ -52,14 +52,3 @@ class MC:
             rollouts.append(roll)
 
         return rollouts
-
-
-if __name__ == "__main__":
-    import gym
-
-    env = gym.make('FrozenLake-v0')
-
-    mc = MC(env, n_episodes=1000, discount=0.99)
-    mc.eval()
-
-    print(mc.vfunc)
