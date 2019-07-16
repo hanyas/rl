@@ -4,15 +4,16 @@ repetitions: 25
 iterations: 25
 # this is the path where the results are stored,
 # it can be different from the location of the experiment scripts
-path: "data/"
+path: "../data/"
 
 params:
   n_samples: 3000
   n_keep: 0
   n_rollouts: 25
-  n_steps: 200
-  discount: 0.98
-  vreg: 1.e-16
+  n_steps: 250
+  kl_bound: 0.1
+  discount: 0.99
+  vreg: 1.e-12
   preg: 1.e-12
   cov0: 16.0
   n_vfeat: 75
@@ -22,5 +23,3 @@ params:
 ---
 # 1. experiment
 name: "reps_pendulum"
-list:
-  kl_bound: [0.1, 0.2, 0.3]

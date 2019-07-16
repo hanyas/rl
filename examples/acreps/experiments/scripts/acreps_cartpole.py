@@ -19,6 +19,7 @@ class MyExperiment(ClusterWork):
         'n_pfeat': 250,
         's_band': np.array([0.5, 0.5, 0.5, 12.5, 12.5]),
         'sa_band': np.array([0.5, 0.5, 0.5, 12.5, 12.5, 2.5]),
+        'mult': 1.0
     }
 
     def reset(self, config=None, rep=0):
@@ -35,6 +36,7 @@ class MyExperiment(ClusterWork):
         n_pfeat = self._params['n_pfeat']
         s_band = np.array(self._params['s_band'])
         sa_band = np.array(self._params['sa_band'])
+        mult = np.array(self._params['mult'])
 
         import gym
 
@@ -48,11 +50,10 @@ class MyExperiment(ClusterWork):
                              kl_bound=kl_bound, discount=discount, lmbda=lmbda,
                              vreg=vreg, preg=preg, cov0=cov0,
                              n_vfeat=n_vfeat, n_pfeat=n_pfeat,
-                             s_band=s_band, sa_band=sa_band)
+                             s_band=s_band, sa_band=sa_band, mult=mult)
 
     def iterate(self, config=None, rep=0, n=0):
-        self.acreps.run(nb_iter=1, verbose=True)
-        return {}
+        return self.acreps.run(nb_iter=1, verbose=True)
 
 
 if __name__ == "__main__":

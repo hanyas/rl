@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
 import numpy as np
 import scipy as sc
 from scipy import stats
@@ -50,12 +47,13 @@ class RandomFourierNet(nn.Module):
 
 class FourierFeatures:
 
-    def __init__(self, dim_state, n_feat, band):
+    def __init__(self, dim_state, n_feat, band, mult):
         self.dim_state = dim_state
         self.n_feat = n_feat
+        self.mult = mult
 
         self.freq = np.random.multivariate_normal(mean=np.zeros(self.dim_state),
-                                                  cov=np.diag(1.0 / band),
+                                                  cov=np.diag(1.0 / (mult * band)),
                                                   size=self.n_feat)
         self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
 
@@ -67,7 +65,7 @@ class FourierFeatures:
 class Policy:
 
     def __init__(self, dim_state, dim_action,
-                 cov, band, n_feat,
+                 cov, band, n_feat, mult,
                  n_epochs=200, n_batch=64,
                  lr=1e-3):
 
@@ -77,7 +75,9 @@ class Policy:
         self.cov = cov
         self.band = band
         self.n_feat = n_feat
-        self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+        self.mult = mult
+        self.basis = FourierFeatures(self.dim_state, self.n_feat,
+                                     self.band, self.mult)
 
         self.mu = RandomFourierNet(self.n_feat, self.dim_action)
         self.log_std = torch.tensor(self.dim_action * [np.log(np.sqrt(cov))],
@@ -129,7 +129,7 @@ class Policy:
 class Dual:
 
     def __init__(self, dim_state, epsi,
-                 n_feat, band,
+                 n_feat, band, mult,
                  n_epochs=100, n_batch=64,
                  lr=1e-3):
 
@@ -137,8 +137,10 @@ class Dual:
         self.epsi = epsi
 
         self.band = band
+        self.mult = mult
         self.n_feat = n_feat
-        self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+        self.basis = FourierFeatures(self.dim_state, self.n_feat,
+                                     self.band, self.mult)
 
         self.vfunc = RandomFourierNet(self.n_feat, 1)
         self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
@@ -185,7 +187,7 @@ class REPS:
                  n_rollouts, n_steps,
                  kl_bound, discount,
                  n_vfeat, n_pfeat,
-                 cov0, band):
+                 cov0, band, mult):
 
         self.env = env
 
@@ -205,12 +207,13 @@ class REPS:
         self.n_pfeat = n_pfeat
 
         self.band = band
+        self.mult = mult
 
         self.dual = Dual(self.dim_state, epsi=self.kl_bound,
-                         n_feat=self.n_vfeat, band=self.band)
+                         n_feat=self.n_vfeat, band=self.band, mult=self.mult)
 
-        self.ctl = Policy(self.dim_state, self.dim_action, cov=cov0, n_feat=self.n_pfeat,
-                          band=self.band)
+        self.ctl = Policy(self.dim_state, self.dim_action, cov=cov0,
+                          n_feat=self.n_pfeat, band=self.band, mult=self.mult)
 
         self.action_limit = self.env.action_space.high
 

@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-
 import autograd.numpy as np
 from autograd import grad, jacobian
 
@@ -36,12 +33,12 @@ def merge(*dicts):
 
 class FourierFeatures:
 
-    def __init__(self, dim_state, n_feat, band):
+    def __init__(self, dim_state, n_feat, band, mult):
         self.dim_state = dim_state
         self.n_feat = n_feat
 
         self.freq = np.random.multivariate_normal(mean=np.zeros(self.dim_state),
-                                                  cov=np.diag(1.0 / band),
+                                                  cov=np.diag(1.0 / (mult * band)),
                                                   size=self.n_feat)
         self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
 
@@ -58,8 +55,10 @@ class Policy:
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
+            self.mult = kwargs.get('mult', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.dim_state, self.n_feat,
+                                         self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
             self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
@@ -164,8 +163,10 @@ class Vfunction:
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
+            self.mult = kwargs.get('mult', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.dim_state, self.n_feat,
+                                         self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
             self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
@@ -209,13 +210,16 @@ class REPS:
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
+            self.mult = kwargs.get('mult', False)
 
             self.n_vfeat = kwargs.get('n_vfeat', False)
             self.n_pfeat = kwargs.get('n_pfeat', False)
 
-            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat, band=self.band)
+            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat,
+                                   band=self.band, mult=self.mult)
 
-            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat, band=self.band)
+            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat,
+                              band=self.band,  mult=self.mult)
         else:
             self.vdgr = kwargs.get('vdgr', False)
             self.pdgr = kwargs.get('pdgr', False)
@@ -316,7 +320,7 @@ class REPS:
 
     def featurize(self, data):
         ivfeatures = np.mean(self.vfunc.features(data['xi']),
-                                  axis=0, keepdims=True)
+                             axis=0, keepdims=True)
         vfeatures = self.vfunc.features(data['x'])
         nvfeatures = self.vfunc.features(data['xn'])
         features = self.discount * nvfeatures - vfeatures + \
@@ -468,8 +472,8 @@ class REPS:
 
             self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
 
-            # pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
-            pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
+            pol = self.ctl.wml(self.data['x'], self.data['u'], self.w, preg=self.preg)
+            # pol = self.ctl.wmap(self.data['x'], self.data['u'], self.w, preg=self.preg, eps=self.kl_bound)
 
             kls = self.kl_samples(self.w)
             kli = self.ctl.kli(pol, self.data['x'])
@@ -478,8 +482,8 @@ class REPS:
             self.ctl = pol
             ent = self.ctl.entropy()
 
-            rwrd = np.mean(self.data['r'])
-            # rwrd = np.mean(eval['r'])
+            # rwrd = np.mean(self.data['r'])
+            rwrd = np.mean(eval['r'])
 
             _trace['rwrd'].append(rwrd)
             _trace['kls'].append(kls)
@@ -496,48 +500,3 @@ class REPS:
                       f'ent={ent:{5}.{4}}')
 
         return _trace
-
-
-if __name__ == "__main__":
-
-    import gym
-    import lab
-
-    # np.random.seed(0)
-    env = gym.make('Pendulum-v0')
-    env._max_episode_steps = 5000
-    # env.seed(0)
-
-    reps = REPS(env=env,
-                n_samples=3000, n_keep=0,
-                n_rollouts=25, n_steps=250,
-                kl_bound=0.1, discount=0.99,
-                vreg=1e-12, preg=1e-12, cov0=8.0,
-                n_vfeat=75, n_pfeat=75,
-                band=np.array([0.5, 0.5, 4.0]))
-
-    for it in range(15):
-        rwrd, kls, kli, klm, ent = reps.run()
-
-        print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-              f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-              f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')
-
-    # # np.random.seed(0)
-    # env = gym.make('Linear-v0')
-    # env._max_episode_steps = 5000
-    # # env.seed(0)
-    #
-    # reps = REPS(env=env,
-    #             n_samples=2500, n_keep=0,
-    #             n_rollouts=25, n_steps=100,
-    #             kl_bound=0.05, discount=0.975,
-    #             vreg=1e-16, preg=1e-16, cov0=5.0,
-    #             vdgr=2, pdgr=1)
-    #
-    # for it in range(10):
-    #     rwrd, kls, kli, klm, ent = reps.run()
-    #
-    #     print('it=', it, f'rwrd={rwrd:{5}.{4}}',
-    #           f'kls={kls:{5}.{4}}', f'kli={kli:{5}.{4}}',
-    #           f'klm={klm:{5}.{4}}', f'ent={ent:{5}.{4}}')

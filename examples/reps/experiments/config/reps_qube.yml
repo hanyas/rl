@@ -4,7 +4,7 @@ repetitions: 1
 iterations: 10
 # this is the path where the results are stored,
 # it can be different from the location of the experiment scripts
-path: "data/"
+path: "../data/"
 
 params:
   n_samples: 5000

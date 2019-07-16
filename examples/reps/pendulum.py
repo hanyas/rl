@@ -16,8 +16,9 @@ env._max_episode_steps = 5000
 reps = REPS(env=env, n_samples=3000, n_keep=0,
             n_rollouts=25, n_steps=250,
             kl_bound=0.1, discount=0.99,
-            vreg=1e-12, preg=1e-12, cov0=8.0,
+            vreg=1e-12, preg=1e-12, cov0=16.0,
             n_vfeat=75, n_pfeat=75,
-            band=np.array([0.5, 0.5, 4.0]))
+            band=np.array([0.5, 0.5, 4.0]),
+            mult=1.0)
 
-reps.run(verbose=True)
+reps.run(nb_iter=10, verbose=True)

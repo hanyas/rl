@@ -33,12 +33,12 @@ def merge(*dicts):
 
 class FourierFeatures:
 
-    def __init__(self, dim_state, n_feat, band):
+    def __init__(self, dim_state, n_feat, band, mult):
         self.dim_state = dim_state
         self.n_feat = n_feat
 
         self.freq = np.random.multivariate_normal(mean=np.zeros(self.dim_state),
-                                                  cov=np.diag(1.0 / band),
+                                                  cov=np.diag(1.0 / (mult * band)),
                                                   size=self.n_feat)
         self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
 
@@ -55,8 +55,10 @@ class Policy:
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
+            self.mult = kwargs.get('mult', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.dim_state, self.n_feat,
+                                         self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
             self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
@@ -161,8 +163,10 @@ class Vfunction:
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
+            self.mult = kwargs.get('mult', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.dim_state, self.n_feat,
+                                         self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
             self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
@@ -186,8 +190,10 @@ class Qfunction:
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
+            self.mult = kwargs.get('mult', False)
             self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state + self.dim_action, self.n_feat, self.band)
+            self.basis = FourierFeatures(self.dim_state + self.dim_action,
+                                         self.n_feat, self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
             self.n_feat = int(sc.special.comb(self.degree + (self.dim_state + self.dim_action), self.degree))
@@ -231,15 +237,19 @@ class ACREPS:
         if 's_band' in kwargs:
             self.s_band = kwargs.get('s_band', False)
             self.sa_band = kwargs.get('sa_band', False)
+            self.mult = kwargs.get('mult', False)
 
             self.n_vfeat = kwargs.get('n_vfeat', False)
             self.n_pfeat = kwargs.get('n_pfeat', False)
 
-            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat, band=self.s_band)
+            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat,
+                                   band=self.s_band, mult=self.mult)
 
-            self.qfunc = Qfunction(self.dim_state, self.dim_action, n_feat=self.n_vfeat, band=self.sa_band)
+            self.qfunc = Qfunction(self.dim_state, self.dim_action, n_feat=self.n_vfeat,
+                                   band=self.sa_band, mult=self.mult)
 
-            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat, band=self.s_band)
+            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat,
+                              band=self.s_band, mult=self.mult)
         else:
             self.vdgr = kwargs.get('vdgr', False)
             self.pdgr = kwargs.get('pdgr', False)
@@ -475,7 +485,7 @@ class ACREPS:
                   'ent': []}
 
         for it in range(nb_iter):
-            # _, eval = self.evaluate(self.n_rollouts)
+            _, eval = self.evaluate(self.n_rollouts)
 
             self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
             self.vfeatures = self.featurize(self.data)
@@ -559,8 +569,8 @@ class ACREPS:
             self.ctl = pol
             ent = self.ctl.entropy()
 
-            rwrd = np.mean(self.data['r'])
-            # rwrd = np.mean(eval['r'])
+            # rwrd = np.mean(self.data['r'])
+            rwrd = np.mean(eval['r'])
 
             _trace['rwrd'].append(rwrd)
             _trace['kls'].append(kls)
