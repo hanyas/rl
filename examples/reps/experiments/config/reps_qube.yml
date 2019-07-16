@@ -19,6 +19,7 @@ params:
   n_vfeat: 250
   n_pfeat: 250
   band: [1.57, 0.5, 0.5, 15.0, 20.0]
+  mult: 1.0
 
 ---
 # 1. experiment
