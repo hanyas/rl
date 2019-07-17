@@ -197,7 +197,7 @@ class Dual:
         return loss
 
 
-class ACREPS:
+class acREPS:
 
     def __init__(self, env,
                  n_samples, n_keep, n_rollouts,

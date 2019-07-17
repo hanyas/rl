@@ -22,3 +22,8 @@ reps = REPS(env=env, n_samples=3000, n_keep=0,
             mult=1.0)
 
 reps.run(nb_iter=10, verbose=True)
+
+# # save data
+# reps.ctl.cov = 0.1 * np.eye(reps.dim_action)
+# rollouts, data = reps.evaluate(n_rollouts=25, n_steps=100, stoch=True)
+# np.savez('reps_pendulum_rollouts', rollouts)

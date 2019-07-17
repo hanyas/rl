@@ -1,7 +1,7 @@
 import numpy as np
 from cluster_work import ClusterWork
 
-from rl.acreps import ACREPS
+from rl.acreps import acREPS
 
 class MyExperiment(ClusterWork):
 
@@ -45,7 +45,7 @@ class MyExperiment(ClusterWork):
         env._max_episode_steps = 500
         env.seed(self._seed)
 
-        self.acreps = ACREPS(env=env,
+        self.acreps = acREPS(env=env,
                              n_samples=n_samples, n_keep=n_keep, n_rollouts=n_rollouts,
                              kl_bound=kl_bound, discount=discount, lmbda=lmbda,
                              vreg=vreg, preg=preg, cov0=cov0,

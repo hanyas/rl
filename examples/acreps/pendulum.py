@@ -8,12 +8,12 @@
 import autograd.numpy as np
 import gym
 
-from rl.acreps import ACREPS
+from rl.acreps import acREPS
 
 env = gym.make('Pendulum-v0')
 env._max_episode_steps = 250
 
-acreps = ACREPS(env=env, n_samples=3000, n_keep=0, n_rollouts=25,
+acreps = acREPS(env=env, n_samples=3000, n_keep=0, n_rollouts=25,
                 kl_bound=0.1, discount=0.98, lmbda=0.95,
                 vreg=1e-12, preg=1e-12, cov0=16.0,
                 n_vfeat=75, n_pfeat=75,

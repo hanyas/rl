@@ -210,7 +210,7 @@ class Qfunction:
         return np.dot(feat, self.theta)
 
 
-class ACREPS:
+class acREPS:
 
     def __init__(self, env,
                  n_samples, n_keep, n_rollouts,

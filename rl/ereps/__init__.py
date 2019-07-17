@@ -1,1 +1,1 @@
-from .ereps import EREPS
+from .ereps import eREPS

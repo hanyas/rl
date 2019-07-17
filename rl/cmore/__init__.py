@@ -1,1 +1,1 @@
-from .cmore import CMORE
+from .cmore import cMORE

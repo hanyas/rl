@@ -5,11 +5,11 @@
 # @Author: Hany Abdulsamad
 # @Contact: hany@robot-learning.de
 
-from rl.cmore import CMORE
+from rl.cmore import cMORE
 from rl.envs import CSphere
 
 
-cmore = CMORE(func=CSphere(d_cntxt=1, d_action=1),
+cmore = cMORE(func=CSphere(d_cntxt=1, d_action=1),
               n_episodes=1000,
               kl_bound=0.05, ent_rate=0.99,
               cov0=100.0, h0=75.0, cdgr=1)

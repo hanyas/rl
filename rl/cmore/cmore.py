@@ -119,7 +119,7 @@ class Model:
         self.Raa = 0.5 * (self.Raa + self.Raa.T)
 
 
-class CMORE:
+class cMORE:
 
     def __init__(self, func, n_episodes,
                  kl_bound, ent_rate,

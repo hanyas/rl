@@ -76,7 +76,7 @@ class Policy:
         return pol
 
 
-class EREPS:
+class eREPS:
 
     def __init__(self, func, n_episodes,
                  kl_bound, **kwargs):

@@ -1,1 +1,1 @@
-from .acreps_npy import ACREPS
+from .acreps_npy import acREPS

@@ -5,11 +5,11 @@
 # @Author: Hany Abdulsamad
 # @Contact: hany@robot-learning.de
 
-from rl.creps import CREPS
+from rl.creps import cREPS
 from rl.envs import CSphere
 
 
-creps = CREPS(func=CSphere(d_cntxt=3, d_action=3),
+creps = cREPS(func=CSphere(d_cntxt=3, d_action=3),
               n_episodes=100,
               kl_bound=0.1,
               vdgr=2, pdgr=1,

@@ -5,11 +5,11 @@
 # @Author: Hany Abdulsamad
 # @Contact: hany@robot-learning.de
 
-from rl.ereps import EREPS
+from rl.ereps import eREPS
 from rl.envs import Sphere
 
 
-ereps = EREPS(func=Sphere(d_action=5),
+ereps = eREPS(func=Sphere(d_action=5),
               n_episodes=10,
               kl_bound=0.1,
               cov0=10.0)

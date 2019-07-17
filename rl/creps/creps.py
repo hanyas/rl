@@ -134,7 +134,7 @@ class Vfunction:
         return np.dot(feat, self.omega)
 
 
-class CREPS:
+class cREPS:
 
     def __init__(self, func,
                  n_episodes, kl_bound,
