@@ -16,3 +16,4 @@ from .discrete.grid import Grid
 from .contextual.testing import CSphere
 
 from .control.lqr.lqr import LQR
+from .control.hybrid.hybrid import Hybrid
