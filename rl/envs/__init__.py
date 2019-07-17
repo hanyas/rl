@@ -10,6 +10,7 @@ from .episodic.testing import Sphere
 from .episodic.testing import Rosenbrock
 from .episodic.testing import Rastrigin
 from .episodic.testing import Styblinski
+from .episodic.testing import Himmelblau
 
 from .discrete.grid import Grid
 

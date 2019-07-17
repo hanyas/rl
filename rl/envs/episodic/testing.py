@@ -10,6 +10,16 @@ import autograd.numpy as np
 from sklearn.preprocessing import PolynomialFeatures
 
 
+class Himmelblau:
+    def __init__(self, d_action=2):
+        self.d_action = d_action
+
+    def eval(self, x):
+        a = x[:, 0] * x[:, 0] + x[:, 1] - 11.0
+        b = x[:, 0] + x[:, 1] * x[:, 1] - 7.0
+        return -1.0 * (a * a + b * b)
+
+
 class Sphere:
 
     def __init__(self, d_action):
