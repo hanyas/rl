@@ -7,7 +7,6 @@ from autograd import grad
 import scipy as sc
 from scipy import optimize
 from scipy import special
-from scipy import stats
 
 from sklearn.preprocessing import PolynomialFeatures
 
@@ -60,7 +59,7 @@ class Policy:
         self.cov = [np.eye(n_actions) for _ in range(self.n_regions)]
 
     def features(self, x):
-        return self.basis.fit_transform(x.reshape(-1, self.n_states)).squeeze()
+        return self.basis.fit_transform(x.reshape(1, -1)).squeeze()
 
     def actions(self, z, x, stoch):
         feat = self.features(x)
@@ -89,20 +88,20 @@ class Vfunction:
             self.basis = PolynomialFeatures(self.degree)
             self.omega = 1e-8 * np.random.randn(self.n_regions * self.n_feat)
 
-    def features(self, z, x):
+    def features(self, x):
         return self.basis.fit_transform(x)
 
-    def values(self, z, x):
-        feat = self.features(z, x)
+    def values(self, x):
+        feat = self.features(x)
         return np.dot(feat, self.omega)
 
 
-class HyREPS:
+class HBREPS_AC:
 
     def __init__(self, env, n_regions,
-                 n_samples, n_iter,
-                 n_rollouts, n_steps, n_keep,
-                 kl_bound, discount,
+                 n_iter, n_rollouts,
+                 n_steps, n_keep,
+                 kl_bound, discount, trace,
                  vreg, preg, cov0,
                  rslds, priors, **kwargs):
 
@@ -113,15 +112,17 @@ class HyREPS:
 
         self.n_regions = n_regions
 
-        self.n_samples = n_samples
         self.n_iter = n_iter
 
         self.n_rollouts = n_rollouts
         self.n_steps = n_steps
         self.n_keep = n_keep
 
+        self.n_samples = self.n_rollouts * self.n_steps
+
         self.kl_bound = kl_bound
         self.discount = discount
+        self.trace = trace
 
         self.vreg = vreg
 
@@ -151,32 +152,39 @@ class HyREPS:
 
         self.action_limit = self.env.action_space.high
 
+        self.data = {'z': np.empty((0,), np.int64),
+                     'x': np.empty((0, self.n_states)),
+                     'g': np.empty((0, self.n_regions)),
+                     'u': np.empty((0, self.n_actions)),
+                     'zn': np.empty((0,), np.int64),
+                     'xn': np.empty((0, self.n_states)),
+                     'gn': np.empty((0, self.n_regions)),
+                     'r': np.empty((0,)),
+                     'done': np.empty((0,), np.int64)}
+
         self.data = {}
         self.rollouts = []
 
-        self.features = None
+        self.vfeatures = None
+        self.qfeatures = None
+        self.nqfeatures = None
+
+        self.targets = None
 
         self.eta = np.array([1.0])
 
-    def sample(self, n_samples, n_keep=0, reset=True, stoch=True, render=False):
+    def sample(self, n_samples, n_keep=0, stoch=True, render=False):
         if len(self.rollouts) >= n_keep:
             rollouts = random.sample(self.rollouts, n_keep)
         else:
             rollouts = []
 
-        coin = sc.stats.binom(1, 1.0 - self.discount)
-
         n = 0
         while True:
-            roll = {'zi': np.empty((0,), np.int64),
-                    'ai': np.empty((0, self.n_regions)),
-                    'xi': np.empty((0, self.n_states)),
-                    'z': np.empty((0,), np.int64),
-                    'a': np.empty((0, self.n_regions)),
+            roll = {'z': np.empty((0,), np.int64),
                     'x': np.empty((0, self.n_states)),
                     'u': np.empty((0, self.n_actions)),
                     'zn': np.empty((0,), np.int64),
-                    'an': np.empty((0, self.n_regions)),
                     'xn': np.empty((0, self.n_states)),
                     'r': np.empty((0,)),
                     'done': np.empty((0,), np.int64)}
@@ -187,63 +195,45 @@ class HyREPS:
             p = np.ones(self.n_regions) / self.n_regions
             z, a = self.rslds.filter(x, p)
 
-            rollouts[-1]['zi'] = np.hstack((rollouts[-1]['zi'], z))
-            rollouts[-1]['ai'] = np.vstack((rollouts[-1]['ai'], a))
-            rollouts[-1]['xi'] = np.vstack((rollouts[-1]['xi'], x))
-            rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], False))
-
             while True:
                 u = self.ctl.actions(z, x, stoch)
 
-                if reset and coin.rvs():
+                rollouts[-1]['z'] = np.hstack((rollouts[-1]['z'], z))
+                rollouts[-1]['x'] = np.vstack((rollouts[-1]['x'], x))
+                rollouts[-1]['u'] = np.vstack((rollouts[-1]['u'], u))
+
+                x, r, done, _ = self.env.step(
+                    np.clip(u, - self.action_limit, self.action_limit))
+                if render:
+                    self.env.render()
+
+                # filter discrete state
+                z, a = self.rslds.filter(x, a)
+
+                rollouts[-1]['zn'] = np.hstack((rollouts[-1]['zn'], z))
+                rollouts[-1]['xn'] = np.vstack((rollouts[-1]['xn'], x))
+                rollouts[-1]['r'] = np.hstack((rollouts[-1]['r'], r))
+                rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], done))
+
+                n = n + 1
+                if n >= n_samples:
                     rollouts[-1]['done'][-1] = True
+
+                    data = merge(*rollouts)
+                    data['u'] = np.reshape(data['u'], (-1, self.n_actions))
+
+                    return rollouts, data
+
+                if done:
                     break
-                else:
-                    rollouts[-1]['z'] = np.hstack((rollouts[-1]['z'], z))
-                    rollouts[-1]['a'] = np.vstack((rollouts[-1]['a'], a))
-                    rollouts[-1]['x'] = np.vstack((rollouts[-1]['x'], x))
-                    rollouts[-1]['u'] = np.vstack((rollouts[-1]['u'], u))
-
-                    x, r, done, _ = self.env.step(
-                        np.clip(u, - self.action_limit, self.action_limit))
-                    if render:
-                        self.env.render()
-
-                    # filter discrete state
-                    z, a = self.rslds.filter(x, a)
-
-                    rollouts[-1]['zn'] = np.hstack((rollouts[-1]['zn'], z))
-                    rollouts[-1]['an'] = np.vstack((rollouts[-1]['an'], a))
-                    rollouts[-1]['xn'] = np.vstack((rollouts[-1]['xn'], x))
-                    rollouts[-1]['r'] = np.hstack((rollouts[-1]['r'], r))
-                    rollouts[-1]['done'] = np.hstack((rollouts[-1]['done'], done))
-
-                    n = n + 1
-                    if n >= n_samples:
-                        rollouts[-1]['done'][-1] = True
-
-                        data = merge(*rollouts)
-                        data['u'] = np.reshape(data['u'], (-1, self.n_actions))
-
-                        return rollouts, data
-
-                    if done:
-                        break
 
     def evaluate(self, n_rollouts, n_steps, stoch=False, render=False):
         rollouts = []
 
         for n in range(n_rollouts):
-            roll = {'zi': np.empty((0,), np.int64),
-                    'ai': np.empty((0, self.n_regions)),
-                    'xi': np.empty((0, self.n_states)),
-                    'z': np.empty((0,), np.int64),
-                    'a': np.empty((0, self.n_regions)),
+            roll = {'z': np.empty((0,), np.int64),
                     'x': np.empty((0, self.n_states)),
                     'u': np.empty((0, self.n_actions)),
-                    'zn': np.empty((0,), np.int64),
-                    'an': np.empty((0, self.n_regions)),
-                    'xn': np.empty((0, self.n_states)),
                     'r': np.empty((0,)),
                     'done': np.empty((0,), np.int64)}
 
@@ -251,15 +241,10 @@ class HyREPS:
             p = np.ones(self.n_regions) / self.n_regions
             z, a = self.rslds.filter(x, p)
 
-            roll['zi'] = np.hstack((roll['zi'], z))
-            roll['ai'] = np.vstack((roll['ai'], a))
-            roll['xi'] = np.vstack((roll['xi'], x))
-
             for t in range(n_steps):
                 u = self.ctl.actions(z, x, stoch)
 
                 roll['z'] = np.hstack((roll['z'], z))
-                roll['a'] = np.vstack((roll['a'], a))
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
@@ -271,11 +256,7 @@ class HyREPS:
                 # filter discrete state
                 z, a = self.rslds.filter(x, a)
 
-                roll['zn'] = np.hstack((roll['zn'], z))
-                roll['an'] = np.vstack((roll['an'], a))
-                roll['xn'] = np.vstack((roll['xn'], x))
                 roll['r'] = np.hstack((roll['r'], r))
-                roll['done'] = np.hstack((roll['done'], done))
 
                 if done:
                     break
@@ -287,80 +268,108 @@ class HyREPS:
 
         return rollouts, data
 
-    def featurize(self, data):
-        ivfeatures = np.mean(self.vfunc.features(data['zi'], data['xi']),
-                             axis=0, keepdims=True)
-        vfeatures = self.vfunc.features(data['z'], data['x'])
-        qfeatures = self.vfunc.features(data['zn'], data['xn'])
-        features = self.discount * qfeatures - vfeatures + \
-                        (1.0 - self.discount) * ivfeatures
-        return features
+    def gae(self, data, phi, omega, discount, trace):
+        values = np.dot(phi, omega)
+        adv = np.zeros_like(values)
 
-    def weights(self, eta, omega, features, rwrd):
-        adv = rwrd + np.dot(features, omega)
+        for rev_k, v in enumerate(reversed(values)):
+            k = len(values) - rev_k - 1
+            if data['done'][k]:
+                adv[k] = data['r'][k] - values[k]
+            else:
+                adv[k] = data['r'][k] + discount * values[k + 1] - values[k] +\
+                         discount * trace * adv[k + 1]
+
+        targets = adv + values
+        return targets
+
+    def mc(self, data, discount):
+        rewards = data['r']
+        targets = np.zeros_like(rewards)
+
+        for rev_k, v in enumerate(reversed(rewards)):
+            k = len(rewards) - rev_k - 1
+            if data['done'][k]:
+                targets[k] = rewards[k]
+            else:
+                targets[k] = rewards[k] + discount * rewards[k + 1]
+        return targets
+
+    def featurize(self, data):
+        vfeatures = self.vfunc.features(data['x'])
+        mvfeatures = np.mean(vfeatures, axis=0, keepdims=True)
+        return vfeatures - mvfeatures
+
+    def weights(self, eta, omega, features, targets):
+        adv = targets - np.dot(features, omega)
         delta = adv - np.max(adv)
         w = np.exp(np.clip(delta / eta, EXP_MIN, EXP_MAX))
         return w, delta, np.max(adv)
 
-    def dual(self, var, epsilon, phi, r):
+    def dual(self, var, epsilon, phi, targets):
         eta, omega = var[0], var[1:]
-        w, _, max_adv = self.weights(eta, omega, phi, r)
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
-        g = g + self.vreg * np.sum(omega ** 2)
+        g = g + self.vreg * (omega.T @ omega)
         return g
 
-    def grad(self, var, epsilon, phi, r):
+    def grad(self, var, epsilon, phi, targets):
         eta, omega = var[0], var[1:]
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
+        w, delta, max_adv = self.weights(eta, omega, phi, targets)
 
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
 
-        domega = np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
+        domega = - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
 
         return np.hstack((deta, domega))
 
-    def dual_eta(self, eta, omega, epsilon, phi, r):
-        w, _, max_adv = self.weights(eta, omega, phi, r)
+    def dual_eta(self, eta, omega, epsilon, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
         return g
 
-    def grad_eta(self, eta, omega, epsilon, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
+    def grad_eta(self, eta, omega, epsilon, phi, targets):
+        w, delta, max_adv = self.weights(eta, omega, phi, targets)
         deta = epsilon + np.log(np.mean(w, axis=0)) - \
                np.sum(w * delta, axis=0) / (eta * np.sum(w, axis=0))
         return deta
 
-    def dual_omega(self, omega, eta, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
+    def dual_omega(self, omega, eta, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = max_adv + eta * np.log(np.mean(w, axis=0))
         g = g + self.vreg * np.sum(omega ** 2)
         return g
 
-    def grad_omega(self, omega, eta, phi, r):
-        w, delta, max_adv = self.weights(eta, omega, phi, r)
-        domega = np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
+    def grad_omega(self, omega, eta, phi, targets):
+        w, _, max_adv = self.weights(eta, omega, phi, targets)
+        domega = - np.sum(w[:, np.newaxis] * phi, axis=0) / np.sum(w, axis=0)
         domega = domega + self.vreg * 2 * omega
         return domega
 
     def kl_samples(self):
-        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
         w = np.clip(w, 1e-75, np.inf)
         w = w / np.mean(w, axis=0)
         return np.mean(w * np.log(w), axis=0)
 
+    def kl_params(self, p, q):
+        n_samples = self.data['x'].shape[0]
+        diff = q.features(self.data['x']) @ q.K.T - p.features(self.data['x']) @ p.K.T
+        kl = 0.5 * (np.trace(np.linalg.inv(q.cov) @ p.cov) +
+                   np.einsum('nk,kh,nh->', diff, np.linalg.inv(q.cov), diff) / n_samples -
+                   self.n_actions + np.log(np.linalg.det(q.cov) / np.linalg.det(p.cov)))
+        return kl
+
     def ml_policy(self):
         pol = copy.deepcopy(self.ctl)
 
-        _, data = self.evaluate(self.n_rollouts, self.n_steps, stoch=True)
-        features = self.featurize(data)
+        w, _, _ = self.weights(self.eta, self.vfunc.omega, self.vfeatures, self.targets)
 
-        w, _, _ = self.weights(self.eta, self.vfunc.omega, features, data['r'])
-
-        x = np.reshape(data['x'], (self.n_rollouts, self.n_steps, -1))
-        u = np.reshape(data['u'], (self.n_rollouts, self.n_steps, -1))
-        w = np.reshape(w, (self.n_rollouts, self.n_steps))
+        x = np.reshape(self.data['x'], (-1, self.n_steps, self.n_states))
+        u = np.reshape(self.data['u'], (-1, self.n_steps, self.n_actions))
+        w = np.reshape(w, (x.shape[0], x.shape[1]))
 
         def baumWelchFunc(args):
             x, u, w, n_regions, priors, regs, rslds, update = args
@@ -387,8 +396,11 @@ class HyREPS:
         for it in range(n_iter):
             _, eval = self.evaluate(self.n_rollouts, self.n_steps)
 
-            self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
-            self.features = self.featurize(self.data)
+            self.rollouts, self.data = self.sample(self.n_samples, n_keep=self.n_keep)
+            self.vfeatures = self.featurize(self.data)
+
+            self.targets = self.gae(self.data, self.vfeatures, self.vfunc.omega,
+                                    self.discount, self.trace)
 
             res = sc.optimize.minimize(self.dual,
                                        np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
@@ -397,8 +409,8 @@ class HyREPS:
                                        jac=grad(self.dual),
                                        args=(
                                            self.kl_bound,
-                                           self.features,
-                                           self.data['r']),
+                                           self.vfeatures,
+                                           self.targets),
                                        bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
 
             self.eta, self.vfunc.omega = res.x[0], res.x[1:]
@@ -410,21 +422,20 @@ class HyREPS:
             #                                method='SLSQP',
             #                                jac=grad(self.dual_eta),
             #                                args=(
-            #                                     self.vfunc.omega,
-            #                                     self.kl_bound,
-            #                                     self.features,
-            #                                     self.data['r']),
+            #                                    self.vfunc.omega,
+            #                                    self.kl_bound,
+            #                                    self.vfeatures,
+            #                                    self.targets),
             #                                bounds=((1e-8, 1e8),),
             #                                options={'maxiter': 5})
             #     # print(res)
             #     #
             #     # check = sc.optimize.check_grad(self.dual_eta,
-            #     #                                self.grad_eta,
-            #     #                                res.x,
+            #     #                                self.grad_eta, res.x,
             #     #                                self.vfunc.omega,
             #     #                                self.kl_bound,
-            #     #                                self.features,
-            #     #                                self.data['r'])
+            #     #                                self.vfeatures,
+            #     #                                self.targets)
             #     # print('Eta Error', check)
             #
             #     self.eta = res.x
@@ -435,25 +446,24 @@ class HyREPS:
             #                                jac=grad(self.dual_omega),
             #                                args=(
             #                                    self.eta,
-            #                                    self.features,
-            #                                    self.data['r']),
-            #                                options={'maxiter': 100})
+            #                                    self.vfeatures,
+            #                                    self.targets),
+            #                                options={'maxiter': 250})
+            #
             #     # print(res)
             #     #
             #     # check = sc.optimize.check_grad(self.dual_omega,
-            #     #                                self.grad_omega,
-            #     #                                res.x,
+            #     #                                self.grad_omega, res.x,
             #     #                                self.eta,
-            #     #                                self.features,
-            #     #                                self.data['r'])
+            #     #                                self.vfeatures,
+            #     #                                self.targets)
             #     # print('Omega Error', check)
             #
             #     self.vfunc.omega = res.x
 
             kl_samples = self.kl_samples()
 
-            pi = self.ml_policy()
-            self.ctl = pi
+            self.ctl = self.ml_policy()
 
             for n in range(self.n_regions):
                 self.rslds.linear_policy[n].K = self.ctl.K[n]

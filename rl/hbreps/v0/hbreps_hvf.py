@@ -1,6 +1,3 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
 import autograd.numpy as np
 from autograd import grad
 
@@ -11,13 +8,8 @@ from scipy import stats
 
 from sklearn.preprocessing import PolynomialFeatures
 
-from rl.hyreps.v0 import BaumWelch
-from rl.hyreps.v0 import merge
-
 import random
 import copy
-from joblib import Parallel, delayed
-
 
 EXP_MAX = 700.0
 EXP_MIN = -700.0
@@ -60,7 +52,7 @@ class Policy:
         self.cov = [np.eye(n_actions) for _ in range(self.n_regions)]
 
     def features(self, x):
-        return self.basis.fit_transform(x.reshape(1, -1)).squeeze()
+        return self.basis.fit_transform(x.reshape(-1, self.n_states)).squeeze()
 
     def actions(self, z, x, stoch):
         feat = self.features(x)
@@ -125,7 +117,7 @@ class Qfunction:
         return np.dot(feat, self.vfunc.omega)
 
 
-class HyREPS_V:
+class HBREPS_HVF:
 
     def __init__(self, env, n_regions,
                  n_samples, n_iter,
