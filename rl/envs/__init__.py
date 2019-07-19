@@ -17,4 +17,9 @@ from .discrete.grid import Grid
 from .contextual.testing import CSphere
 
 from .control.lqr.lqr import LQR
-from .control.hybrid.hybrid import Hybrid
+from .control.hybrid.msd import MassSpringDamper
+from .control.pendulum.pendulum import Pendulum
+from .control.lagoudakis.cartpole import CartPole
+
+from .control.hybrid.hb_msd import HybridMassSpringDamper
+from .control.hybrid.hb_pendulum import HybridPendulum

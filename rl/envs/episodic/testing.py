@@ -11,8 +11,8 @@ from sklearn.preprocessing import PolynomialFeatures
 
 
 class Himmelblau:
-    def __init__(self, d_action=2):
-        self.d_action = d_action
+    def __init__(self, dm_act=2):
+        self.dm_act = dm_act
 
     def eval(self, x):
         a = x[:, 0] * x[:, 0] + x[:, 1] - 11.0
@@ -22,14 +22,14 @@ class Himmelblau:
 
 class Sphere:
 
-    def __init__(self, d_action):
-        self.d_action = d_action
+    def __init__(self, dm_act):
+        self.dm_act = dm_act
 
-        M = np.random.randn(d_action, d_action)
+        M = np.random.randn(dm_act, dm_act)
         tmp = M @ M.T
         Q = tmp[np.nonzero(np.triu(tmp))]
 
-        q = 0.0 * np.random.rand(d_action)
+        q = 0.0 * np.random.rand(dm_act)
         q0 = 0.0 * np.random.rand()
 
         self.param = np.hstack((q0, q, Q))
@@ -42,8 +42,8 @@ class Sphere:
 
 class Rosenbrock:
 
-    def __init__(self, d_action):
-        self.d_action = d_action
+    def __init__(self, dm_act):
+        self.dm_act = dm_act
 
     def eval(self, x):
         return - np.sum(100.0 * (x[:, 1:] - x[:, :-1] ** 2.0) ** 2.0 +
@@ -51,17 +51,17 @@ class Rosenbrock:
 
 
 class Styblinski:
-    def __init__(self, d_action):
-        self.d_action = d_action
+    def __init__(self, dm_act):
+        self.dm_act = dm_act
 
     def eval(self, x):
         return - 0.5 * np.sum(x**4.0 - 16.0 * x**2 + 5 * x, axis=-1)
 
 
 class Rastrigin:
-    def __init__(self, d_action):
-        self.d_action = d_action
+    def __init__(self, dm_act):
+        self.dm_act = dm_act
 
     def eval(self, x):
-        return - (10.0 * self.d_action +
+        return - (10.0 * self.dm_act +
                   np.sum(x**2 - 10.0 * np.cos(2.0 * np.pi * x), axis=-1))

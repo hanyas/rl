@@ -12,12 +12,12 @@ import matplotlib.pyplot as plt
 class Grid:
     def __init__(self):
         # states
-        self.sdim = (9, 10)
-        self.states = list(np.indices(self.sdim))
+        self.dm_state = (9, 10)
+        self.states = list(np.indices(self.dm_state))
 
         # actions
-        self.adim = (5,)
-        self.actions = list(np.indices(self.adim))
+        self.dm_act = (5,)
+        self.actions = list(np.indices(self.dm_act))
 
         # reward
         O = -1e5  # Dangerous places to avoid

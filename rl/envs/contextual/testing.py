@@ -10,16 +10,16 @@ import autograd.numpy as np
 
 class CSphere:
 
-    def __init__(self, d_cntxt, d_action):
-        self.d_cntxt = d_cntxt
-        self.d_action = d_action
+    def __init__(self, dm_cntxt, dm_act):
+        self.dm_cntxt = dm_cntxt
+        self.dm_act = dm_act
 
-        M = np.random.randn(self.d_action, self.d_action)
+        M = np.random.randn(self.dm_act, self.dm_act)
         M = 0.5 * (M + M.T)
         self.Q = M @ M.T
 
-    def context(self, n_episodes):
-        return np.random.uniform(-1.0, 1.0, size=(n_episodes, self.d_cntxt))
+    def context(self, nb_episodes):
+        return np.random.uniform(-1.0, 1.0, size=(nb_episodes, self.dm_cntxt))
 
     def eval(self, x, c):
         diff = x - c
