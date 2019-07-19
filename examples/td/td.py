@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 env = gym.make('FrozenLake-v0')
 
 td = TD(env, discount=0.95, alpha=0.25)
-td.eval(n_samples=10000)
+td.eval(nb_samples=10000)
 
 print(td.vfunc)
 

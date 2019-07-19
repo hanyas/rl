@@ -15,4 +15,4 @@ qlearning = QLearning(env,
                       alpha=0.1,
                       pdict={'type': 'softmax', 'beta': 0.98})
 
-qlearning.run(n_samples=10000 * 200)
+qlearning.run(nb_samples=10000 * 200)

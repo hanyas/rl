@@ -6,33 +6,33 @@ from rl.reps import REPS
 class MyExperiment(ClusterWork):
 
     _default_params = {
-        'n_samples': 3000,
-        'n_keep': 0,
-        'n_rollouts': 25,
-        'n_steps': 200,
+        'nb_samples': 3000,
+        'nb_keep': 0,
+        'nb_rollouts': 25,
+        'nb_steps': 200,
         'kl_bound': 0.1,
         'discount': 0.99,
         'vreg': 1e-16,
         'preg': 1e-12,
         'cov0': 8.0,
-        'n_vfeat': 75,
-        'n_pfeat': 75,
+        'nb_vfeat': 75,
+        'nb_pfeat': 75,
         'band': np.array([0.5, 0.5, 4.0]),
         'mult': 1.0
     }
 
     def reset(self, config=None, rep=0):
-        n_samples = self._params['n_samples']
-        n_keep = self._params['n_keep']
-        n_rollouts = self._params['n_rollouts']
-        n_steps = self._params['n_steps']
+        nb_samples = self._params['nb_samples']
+        nb_keep = self._params['nb_keep']
+        nb_rollouts = self._params['nb_rollouts']
+        nb_steps = self._params['nb_steps']
         kl_bound = self._params['kl_bound']
         discount = self._params['discount']
         vreg = self._params['vreg']
         preg = self._params['preg']
         cov0 = self._params['cov0']
-        n_vfeat = self._params['n_vfeat']
-        n_pfeat = self._params['n_pfeat']
+        nb_vfeat = self._params['nb_vfeat']
+        nb_pfeat = self._params['nb_pfeat']
         band = np.array(self._params['band'])
         mult = np.array(self._params['mult'])
 
@@ -44,11 +44,11 @@ class MyExperiment(ClusterWork):
         env.seed(self._seed)
 
         self.reps = REPS(env=env,
-                         n_samples=n_samples, n_keep=n_keep,
-                         n_rollouts=n_rollouts, n_steps=n_steps,
+                         nb_samples=nb_samples, nb_keep=nb_keep,
+                         nb_rollouts=nb_rollouts, nb_steps=nb_steps,
                          kl_bound=kl_bound, discount=discount,
                          vreg=vreg, preg=preg, cov0=cov0,
-                         n_vfeat=n_vfeat, n_pfeat=n_pfeat,
+                         nb_vfeat=nb_vfeat, nb_pfeat=nb_pfeat,
                          band=band, mult=mult)
 
     def iterate(self, config=None, rep=0, n=0):

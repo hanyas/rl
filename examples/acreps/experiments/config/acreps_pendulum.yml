@@ -7,17 +7,17 @@ iterations: 25
 path: "../data/"
 
 params:
-  n_samples: 3000
-  n_keep: 0
-  n_rollouts: 25
+  nb_samples: 3000
+  nb_keep: 0
+  nb_rollouts: 25
   kl_bound: 0.1
   discount: 0.98
   lmbda: 0.95
   vreg: 1.e-12
   preg: 1.e-12
   cov0: 8.0
-  n_vfeat: 75
-  n_pfeat: 75
+  nb_vfeat: 75
+  nb_pfeat: 75
   s_band: [0.5, 0.5, 4.0]
   sa_band: [0.5, 0.5, 3.0, 1.0]
   mult: 1.0

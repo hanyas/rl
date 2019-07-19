@@ -14,4 +14,4 @@ env = gym.make('FrozenLake-v0')
 dqlearning = DoubleQLearning(env, discount=0.95,
                              alpha=0.1, pdict={'type': 'softmax', 'beta': 0.98})
 
-dqlearning.run(n_samples=10000*200)
+dqlearning.run(nb_samples=10000*200)

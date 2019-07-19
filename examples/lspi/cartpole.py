@@ -12,7 +12,7 @@ from rl.lspi import LSPI
 env = gym.make('CartPole-v0')
 env._max_episode_steps = 100
 
-lspi = LSPI(env=env, n_samples=10000, n_actions=2,
+lspi = LSPI(env=env, nb_samples=10000, n_actions=2,
             discount=0.95, lmbda=.25,
             alpha=1e-12, beta=1e-8,
             qdict={'type': 'poly',

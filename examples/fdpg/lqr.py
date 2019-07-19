@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 from rl.fdpg import FDPG
 
-env = gym.make('LQR-v0')
+env = gym.make('LQR-RL-v0')
 env._max_episode_steps = 100
 
 fdpg = FDPG(env, n_episodes=100,

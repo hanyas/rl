@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 
 from rl.reinforce import REINFORCE
 
-env = gym.make('LQR-v0')
+env = gym.make('LQR-RL-v0')
 env._max_episode_steps = 100
 
-reinforce = REINFORCE(env, n_samples=2500,
+reinforce = REINFORCE(env, nb_samples=2500,
                       discount=0.995,
                       alpha=1e-5,
                       pdict={'type': 'poly', 'degree': 1})

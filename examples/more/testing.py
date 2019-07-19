@@ -8,8 +8,8 @@
 from rl.more import MORE
 from rl.envs import Sphere
 
-more = MORE(func=Sphere(d_action=2),
-            n_samples=1000,
+more = MORE(func=Sphere(dm_act=2),
+            nb_samples=1000,
             kl_bound=0.05,
             ent_rate=0.99,
             cov0=100.0,

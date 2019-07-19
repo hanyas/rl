@@ -14,4 +14,4 @@ sarsa = SARSA(env, discount=0.95,
               lmbda=0.25, alpha=0.1,
               pdict={'type': 'softmax', 'beta': 0.98})
 
-sarsa.run(n_samples=10000 * 200)
+sarsa.run(nb_samples=10000 * 200)

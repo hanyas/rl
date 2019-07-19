@@ -9,7 +9,7 @@ from rl.creps import cREPS
 from rl.envs import CSphere
 
 
-creps = cREPS(func=CSphere(d_cntxt=3, d_action=3),
+creps = cREPS(func=CSphere(dm_cntxt=3, dm_act=3),
               n_episodes=100,
               kl_bound=0.1,
               vdgr=2, pdgr=1,
