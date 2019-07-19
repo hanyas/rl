@@ -15,19 +15,19 @@ EXP_MIN = -700.0
 
 class Policy:
 
-    def __init__(self, d_cntxt, d_action, degree, cov0):
-        self.d_cntxt = d_cntxt
-        self.d_action = d_action
+    def __init__(self, dm_cntxt, dm_act, degree, cov0):
+        self.dm_cntxt = dm_cntxt
+        self.dm_act = dm_act
 
         self.degree = degree
         self.basis = PolynomialFeatures(self.degree)
-        self.n_feat = int(sc.special.comb(self.degree + self.d_cntxt, self.degree))
+        self.nb_feat = int(sc.special.comb(self.degree + self.dm_cntxt, self.degree))
 
-        self.K = 1e-8 * np.random.randn(self.d_action, self.n_feat)
-        self.cov = cov0 * np.eye(d_action)
+        self.K = 1e-8 * np.random.randn(self.dm_act, self.nb_feat)
+        self.cov = cov0 * np.eye(dm_act)
 
     def features(self, c):
-        return self.basis.fit_transform(c.reshape(-1, self.d_cntxt))
+        return self.basis.fit_transform(c.reshape(-1, self.dm_cntxt))
 
     def mean(self, c):
         feat = self.features(c)
@@ -53,7 +53,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(self.cov), diff), axis=0) -
-                    self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    self.dm_act + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def klm(self, pi, c):
@@ -61,7 +61,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(pi.cov) @ self.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(pi.cov), diff), axis=0) -
-                    self.d_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
+                    self.dm_act + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
         return kl
 
     def entropy(self):
@@ -117,14 +117,14 @@ class Policy:
 
 class Vfunction:
 
-    def __init__(self, d_cntxt, degree):
-        self.d_cntxt = d_cntxt
+    def __init__(self, dm_cntxt, degree):
+        self.dm_cntxt = dm_cntxt
 
         self.degree = degree
-        self.n_feat = int(sc.special.comb(self.degree + self.d_cntxt, self.degree))
+        self.nb_feat = int(sc.special.comb(self.degree + self.dm_cntxt, self.degree))
         self.basis = PolynomialFeatures(self.degree)
 
-        self.omega = 1e-8 * np.random.randn(self.n_feat)
+        self.omega = 1e-8 * np.random.randn(self.nb_feat)
 
     def features(self, c):
         return self.basis.fit_transform(c)
@@ -142,8 +142,8 @@ class cREPS:
                  vreg, preg, **kwargs):
 
         self.func = func
-        self.d_action = self.func.d_action
-        self.d_cntxt = self.func.d_cntxt
+        self.dm_act = self.func.dm_act
+        self.dm_cntxt = self.func.dm_cntxt
 
         self.n_episodes = n_episodes
         self.kl_bound = kl_bound
@@ -156,16 +156,16 @@ class cREPS:
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.d_action, self.d_cntxt,
+            self.ctl = Policy(self.dm_act, self.dm_cntxt,
                               self.pdgr, cov0)
         else:
-            self.ctl = Policy(self.d_action, self.d_cntxt,
+            self.ctl = Policy(self.dm_act, self.dm_cntxt,
                               self.pdgr, 100.0)
 
-        self.n_pfeat = self.ctl.n_feat
+        self.nb_pfeat = self.ctl.nb_feat
 
-        self.vfunc = Vfunction(self.d_cntxt, self.vdgr)
-        self.n_vfeat = self.vfunc.n_feat
+        self.vfunc = Vfunction(self.dm_cntxt, self.vdgr)
+        self.nb_vfeat = self.vfunc.nb_feat
 
         self.eta = np.array([1.0])
 
@@ -223,7 +223,7 @@ class cREPS:
             self.vfeatures = self.vfunc.features(self.data['c'])
 
             res = sc.optimize.minimize(self.dual,
-                                       np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
+                                       np.hstack((1.0, 1e-8 * np.random.randn(self.nb_vfeat))),
                                        method='L-BFGS-B',
                                        jac=self.grad,
                                        # jac=grad(self.dual),
@@ -231,7 +231,7 @@ class cREPS:
                                            self.kl_bound,
                                            self.data['r'],
                                            self.vfeatures),
-                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.nb_vfeat)
 
             self.eta, self.vfunc.omega = res.x[0], res.x[1:]
             self.w, _, _ = self.weights(self.eta, self.vfunc.omega,

@@ -7,12 +7,12 @@ class TD:
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
-        self.d_action = 4  # self.env.action_space.shape[0]
+        self.dm_act = 4  # self.env.action_space.shape[0]
 
         self.discount = discount
 
         # random policy
-        self.ctl = 1.0 / self.d_action * np.ones((self.d_action,))
+        self.ctl = 1.0 / self.dm_act * np.ones((self.dm_act,))
 
         self.alpha = alpha
 
@@ -21,7 +21,7 @@ class TD:
         self.td_error = []
         self.rollouts = None
 
-    def eval(self, n_samples):
+    def eval(self, nb_samples):
         rollouts = []
 
         n_samp = 0
@@ -38,7 +38,7 @@ class TD:
 
             done = False
             while not done:
-                u = np.random.choice(self.d_action, p=self.ctl)
+                u = np.random.choice(self.dm_act, p=self.ctl)
 
                 roll['x'] = np.hstack((roll['x'], x))
                 roll['u'] = np.hstack((roll['u'], u))
@@ -60,7 +60,7 @@ class TD:
                 x = xn
 
                 n_samp += 1
-                if n_samp >= n_samples:
+                if n_samp >= nb_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     return rollouts
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     env = gym.make('FrozenLake-v0')
 
     td = TD(env, discount=0.95, alpha=0.25)
-    td.eval(n_samples=10000)
+    td.eval(nb_samples=10000)
 
     print(td.vfunc)
 

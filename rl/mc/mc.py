@@ -7,12 +7,12 @@ class MC:
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
-        self.d_action = 4  # self.env.action_space.shape[0]
+        self.dm_act = 4  # self.env.action_space.shape[0]
 
         self.n_episodes = n_episodes
         self.discount = discount
 
-        self.ctl = 1.0 / self.d_action * np.ones((self.d_action,))
+        self.ctl = 1.0 / self.dm_act * np.ones((self.dm_act,))
 
         self.vfunc = np.zeros((self.d_state,))
         self.ret = [[] for _ in range(self.d_state)]
@@ -32,7 +32,7 @@ class MC:
 
             done = False
             while not done:
-                u = np.random.choice(self.d_action, p=self.ctl)
+                u = np.random.choice(self.dm_act, p=self.ctl)
 
                 roll['x'] = np.hstack((roll['x'], x))
                 roll['u'] = np.hstack((roll['u'], u))

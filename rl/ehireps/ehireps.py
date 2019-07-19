@@ -15,22 +15,22 @@ EXP_MIN = -700.0
 
 class Policy:
 
-    def __init__(self, d_action, n_comp):
-        self.d_action = d_action
-        self.n_comp = n_comp
+    def __init__(self, dm_act, nb_comp):
+        self.dm_act = dm_act
+        self.nb_comp = nb_comp
 
-        gating_hypparams = dict(K=self.n_comp, alphas=np.ones((self.n_comp,)))
+        gating_hypparams = dict(K=self.nb_comp, alphas=np.ones((self.nb_comp,)))
         gating_prior = distributions.Dirichlet(**gating_hypparams)
 
-        components_hypparams = dict(mu=np.zeros((self.d_action, )),
+        components_hypparams = dict(mu=np.zeros((self.dm_act, )),
                                     kappa=0.01,
-                                    psi=np.eye(self.d_action),
-                                    nu=self.d_action + 2)
+                                    psi=np.eye(self.dm_act),
+                                    nu=self.dm_act + 2)
 
         components_prior = distributions.NormalInverseWishart(**components_hypparams)
 
         self.mixture = models.Mixture(gating=distributions.BayesianCategoricalWithDirichlet(gating_prior),
-                                      components=[distributions.BayesianGaussian(components_prior) for _ in range(self.n_comp)])
+                                      components=[distributions.BayesianGaussian(components_prior) for _ in range(self.nb_comp)])
 
     def action(self, n):
         samples, _, resp = self.mixture.generate(n, resp=True)
@@ -63,18 +63,18 @@ class Policy:
 class eHiREPS:
 
     def __init__(self, func, n_episodes,
-                 n_comp, kl_bound):
+                 nb_comp, kl_bound):
 
         self.func = func
-        self.d_action = self.func.d_action
+        self.dm_act = self.func.dm_act
 
-        self.n_comp = n_comp
+        self.nb_comp = nb_comp
 
         self.n_episodes = n_episodes
 
         self.kl_bound = kl_bound
 
-        self.ctl = Policy(self.d_action, self.n_comp)
+        self.ctl = Policy(self.dm_act, self.nb_comp)
 
         self.data = None
         self.w = None

@@ -23,15 +23,15 @@ def merge(*dicts):
 
 class FourierFeatures:
 
-    def __init__(self, d_state, n_feat, band):
+    def __init__(self, d_state, nb_feat, band):
         self.d_state = d_state
 
-        self.n_feat = n_feat
+        self.nb_feat = nb_feat
 
         self.freq = np.random.multivariate_normal(mean=np.zeros(self.d_state),
                                                   cov=np.diag(1.0 / band),
-                                                  size=self.n_feat)
-        self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
+                                                  size=self.nb_feat)
+        self.shift = np.random.uniform(-np.pi, np.pi, size=self.nb_feat)
 
     def fit_transform(self, x):
         phi = np.sin(np.einsum('nk,...k->...n', self.freq, x) + self.shift)
@@ -49,7 +49,7 @@ class RadialFeatures:
         self.sigma = width
         self.invsigma = np.linalg.inv(self.sigma)
 
-        self.n_feat = np.power(self.n_centers, self.d_state) + 1
+        self.nb_feat = np.power(self.n_centers, self.d_state) + 1
 
         centers = np.zeros((self.d_state, self.n_centers))
         for n in range(self.d_state):
@@ -60,9 +60,9 @@ class RadialFeatures:
         self.centers = np.dstack(tuple(mesh)).reshape((-1, self.d_state))
 
     def fit_transform(self, x):
-        phi = np.ones((x.shape[0], self.n_feat))
+        phi = np.ones((x.shape[0], self.nb_feat))
 
-        for k in range(1, self.n_feat):
+        for k in range(1, self.nb_feat):
             dist = x - self.centers[k - 1]
             feat = np.einsum('...k,kh,...h->...', dist, self.invsigma, dist)
             phi[:, k] = np.exp(- 0.5 * feat)
@@ -72,17 +72,17 @@ class RadialFeatures:
 
 class Qfunction:
 
-    def __init__(self, d_state, d_action, qdict):
+    def __init__(self, d_state, dm_act, qdict):
         self.d_state = d_state
-        self.d_action = d_action
+        self.dm_act = dm_act
 
         self.type = qdict['type']
 
         if self.type == 'fourier':
-            self.n_feat = qdict['n_feat']
+            self.nb_feat = qdict['nb_feat']
             self.band = qdict['band']
             self.basis = FourierFeatures(self.d_state,
-                                         self.n_feat, self.band)
+                                         self.nb_feat, self.band)
 
         elif self.type == 'rbf':
             self.n_centers = qdict['n_centers']
@@ -90,24 +90,24 @@ class Qfunction:
             self.width = qdict['width']
             self.basis = RadialFeatures(self.d_state, self.n_centers,
                                         self.ranges, self.width)
-            self.n_feat = self.basis.n_feat
+            self.nb_feat = self.basis.nb_feat
 
         elif self.type == 'poly':
             self.degree = qdict['degree']
             self.basis = PolynomialFeatures(self.degree)
-            self.n_feat = int(sc.special.comb(self.degree + self.d_state,
+            self.nb_feat = int(sc.special.comb(self.degree + self.d_state,
                                               self.degree))
 
-        self.omega = 1e-3 * np.random.randn(self.d_action * self.n_feat)
+        self.omega = 1e-3 * np.random.randn(self.dm_act * self.nb_feat)
 
     def features(self, x):
         x = np.reshape(x, (-1, self.d_state))
 
-        phi = np.zeros((self.d_action, x.shape[0], self.d_action * self.n_feat))
-        for n in range(self.d_action):
+        phi = np.zeros((self.dm_act, x.shape[0], self.dm_act * self.nb_feat))
+        for n in range(self.dm_act):
             idx = np.ix_(range(n, n + 1),
                          range(x.shape[0]),
-                         range(n * self.n_feat, n * self.n_feat + self.n_feat))
+                         range(n * self.nb_feat, n * self.nb_feat + self.nb_feat))
             phi[idx] = self.basis.fit_transform(x)[np.newaxis, :, :]
         return phi
 
@@ -118,9 +118,9 @@ class Qfunction:
 
 class Policy:
 
-    def __init__(self, d_state, d_action, pdict):
+    def __init__(self, d_state, dm_act, pdict):
         self.d_state = d_state
-        self.d_action = d_action
+        self.dm_act = dm_act
 
         self.type = pdict['type']
 
@@ -135,32 +135,32 @@ class Policy:
         if stoch:
             if self.type == 'softmax':
                 pmf = np.exp(np.clip(qvals / self.beta, -700, 700))
-                return np.random.choice(self.d_action, p=pmf/np.sum(pmf))
+                return np.random.choice(self.dm_act, p=pmf/np.sum(pmf))
             elif self.type == 'greedy':
                 if self.eps >= np.random.rand():
-                    return np.random.choice(self.d_action)
+                    return np.random.choice(self.dm_act)
                 else:
                     return np.argmax(qvals)
             else:
-                return np.random.choice(self.d_action, p=self.weights)
+                return np.random.choice(self.dm_act, p=self.weights)
         else:
             return np.argmax(qvals)
 
 
 class LSPI:
 
-    def __init__(self, env, n_samples, n_actions,
+    def __init__(self, env, nb_samples, n_actions,
                  discount, lmbda, alpha, beta, qdict, pdict):
 
         self.env = env
 
         self.d_state = self.env.observation_space.shape[0]
-        self.d_action = n_actions  # self.env.action_space.shape[0]
+        self.dm_act = n_actions  # self.env.action_space.shape[0]
 
-        self.n_samples = n_samples
+        self.nb_samples = nb_samples
         self.discount = discount
 
-        self.ctl = Policy(self.d_state, self.d_action, pdict)
+        self.ctl = Policy(self.d_state, self.dm_act, pdict)
 
         self.lmbda = lmbda
 
@@ -169,13 +169,13 @@ class LSPI:
         self.beta = beta
 
         self.qdict = qdict
-        self.qfunc = Qfunction(self.d_state, self.d_action, self.qdict)
+        self.qfunc = Qfunction(self.d_state, self.dm_act, self.qdict)
 
-        self.n_feat = self.qfunc.n_feat
+        self.nb_feat = self.qfunc.nb_feat
 
         self.rollouts = None
 
-    def sample(self, n_samples, stoch=True):
+    def sample(self, nb_samples, stoch=True):
         rollouts = []
 
         n = 0
@@ -201,7 +201,7 @@ class LSPI:
                 roll['r'] = np.hstack((roll['r'], r))
 
                 n = n + 1
-                if n >= n_samples:
+                if n >= nb_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     return rollouts
@@ -230,7 +230,7 @@ class LSPI:
             idx = (roll['un'], np.asarray(range(len(roll['un']))))
             roll['nphi'] = nphi[idx]
 
-        _K = self.qfunc.n_feat * self.qfunc.d_action
+        _K = self.qfunc.nb_feat * self.qfunc.dm_act
 
         _A = np.zeros((_K, _K))
         _b = np.zeros((_K,))
@@ -263,7 +263,7 @@ class LSPI:
         return np.linalg.solve(_X.T.dot(_X) + self.beta * _I, _X.T.dot(_y)), rollouts
 
     def run(self, delta):
-        self.rollouts = self.sample(self.n_samples)
+        self.rollouts = self.sample(self.nb_samples)
 
         it = 0
         norm = np.inf

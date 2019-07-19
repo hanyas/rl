@@ -47,15 +47,15 @@ class RandomFourierNet(nn.Module):
 
 class FourierFeatures:
 
-    def __init__(self, dim_state, n_feat, band, mult):
-        self.dim_state = dim_state
-        self.n_feat = n_feat
+    def __init__(self, dm_state, nb_feat, band, mult):
+        self.dm_state = dm_state
+        self.nb_feat = nb_feat
         self.mult = mult
 
-        self.freq = np.random.multivariate_normal(mean=np.zeros(self.dim_state),
+        self.freq = np.random.multivariate_normal(mean=np.zeros(self.dm_state),
                                                   cov=np.diag(1.0 / (mult * band)),
-                                                  size=self.n_feat)
-        self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
+                                                  size=self.nb_feat)
+        self.shift = np.random.uniform(-np.pi, np.pi, size=self.nb_feat)
 
     def fit_transform(self, x):
         phi = np.sin(np.einsum('nk,...k->...n', self.freq, x) + self.shift)
@@ -64,23 +64,23 @@ class FourierFeatures:
 
 class Policy:
 
-    def __init__(self, dim_state, dim_action,
-                 cov, band, n_feat, mult,
+    def __init__(self, dm_state, dm_act,
+                 cov, band, nb_feat, mult,
                  n_epochs=200, n_batch=64,
                  lr=1e-3):
 
-        self.dim_state = dim_state
-        self.dim_action = dim_action
+        self.dm_state = dm_state
+        self.dm_act = dm_act
 
         self.cov = cov
         self.band = band
-        self.n_feat = n_feat
+        self.nb_feat = nb_feat
         self.mult = mult
-        self.basis = FourierFeatures(self.dim_state, self.n_feat,
+        self.basis = FourierFeatures(self.dm_state, self.nb_feat,
                                      self.band, self.mult)
 
-        self.mu = RandomFourierNet(self.n_feat, self.dim_action)
-        self.log_std = torch.tensor(self.dim_action * [np.log(np.sqrt(cov))],
+        self.mu = RandomFourierNet(self.nb_feat, self.dm_act)
+        self.log_std = torch.tensor(self.dm_act * [np.log(np.sqrt(cov))],
                                     requires_grad=True,
                                     dtype=torch.float32)
 
@@ -128,21 +128,21 @@ class Policy:
 
 class Dual:
 
-    def __init__(self, dim_state, epsi,
-                 n_feat, band, mult,
+    def __init__(self, dm_state, epsi,
+                 nb_feat, band, mult,
                  n_epochs=100, n_batch=64,
                  lr=1e-3):
 
-        self.dim_state = dim_state
+        self.dm_state = dm_state
         self.epsi = epsi
 
         self.band = band
         self.mult = mult
-        self.n_feat = n_feat
-        self.basis = FourierFeatures(self.dim_state, self.n_feat,
+        self.nb_feat = nb_feat
+        self.basis = FourierFeatures(self.dm_state, self.nb_feat,
                                      self.band, self.mult)
 
-        self.vfunc = RandomFourierNet(self.n_feat, 1)
+        self.vfunc = RandomFourierNet(self.nb_feat, 1)
         self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
 
         self.n_epochs = n_epochs
@@ -183,39 +183,39 @@ class Dual:
 class REPS:
 
     def __init__(self, env,
-                 n_samples, n_keep,
-                 n_rollouts, n_steps,
+                 nb_samples, nb_keep,
+                 nb_rollouts, nb_steps,
                  kl_bound, discount,
-                 n_vfeat, n_pfeat,
+                 nb_vfeat, nb_pfeat,
                  cov0, band, mult):
 
         self.env = env
 
-        self.dim_state = self.env.observation_space.shape[0]
-        self.dim_action = self.env.action_space.shape[0]
+        self.dm_state = self.env.observation_space.shape[0]
+        self.dm_act = self.env.action_space.shape[0]
 
-        self.n_samples = n_samples
-        self.n_keep = n_keep
+        self.nb_samples = nb_samples
+        self.nb_keep = nb_keep
 
-        self.n_rollouts = n_rollouts
-        self.n_steps = n_steps
+        self.nb_rollouts = nb_rollouts
+        self.nb_steps = nb_steps
 
         self.kl_bound = kl_bound
         self.discount = discount
 
-        self.n_vfeat = n_vfeat
-        self.n_pfeat = n_pfeat
+        self.nb_vfeat = nb_vfeat
+        self.nb_pfeat = nb_pfeat
 
         self.band = band
         self.mult = mult
 
-        self.dual = Dual(self.dim_state, epsi=self.kl_bound,
-                         n_feat=self.n_vfeat, band=self.band, mult=self.mult)
+        self.dual = Dual(self.dm_state, epsi=self.kl_bound,
+                         nb_feat=self.nb_vfeat, band=self.band, mult=self.mult)
 
-        self.ctl = Policy(self.dim_state, self.dim_action, cov=cov0,
-                          n_feat=self.n_pfeat, band=self.band, mult=self.mult)
+        self.ctl = Policy(self.dm_state, self.dm_act, cov=cov0,
+                          nb_feat=self.nb_pfeat, band=self.band, mult=self.mult)
 
-        self.action_limit = self.env.action_space.high
+        self.ulim = self.env.action_space.high
 
         self.data = {}
         self.rollouts = []
@@ -230,9 +230,9 @@ class REPS:
 
         self.pfeatures = None
 
-    def sample(self, n_samples, n_keep=0, reset=True, stoch=True, render=False):
-        if len(self.rollouts) >= n_keep:
-            rollouts = random.sample(self.rollouts, n_keep)
+    def sample(self, nb_samples, nb_keep=0, reset=True, stoch=True, render=False):
+        if len(self.rollouts) >= nb_keep:
+            rollouts = random.sample(self.rollouts, nb_keep)
         else:
             rollouts = []
 
@@ -240,10 +240,10 @@ class REPS:
 
         n = 0
         while True:
-            roll = {'xi': np.empty((0, self.dim_state)),
-                    'x': np.empty((0, self.dim_state)),
-                    'u': np.empty((0, self.dim_action)),
-                    'xn': np.empty((0, self.dim_state)),
+            roll = {'xi': np.empty((0, self.dm_state)),
+                    'x': np.empty((0, self.dm_state)),
+                    'u': np.empty((0, self.dm_act)),
+                    'xn': np.empty((0, self.dm_state)),
                     'r': np.empty((0, 1)),
                     'done': np.empty((0,), np.int64)}
 
@@ -263,7 +263,7 @@ class REPS:
                     roll['x'] = np.vstack((roll['x'], x))
                     roll['u'] = np.vstack((roll['u'], u))
 
-                    x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
+                    x, r, done, _ = self.env.step(np.clip(u, - self.ulim, self.ulim))
                     if render:
                         self.env.render()
 
@@ -272,7 +272,7 @@ class REPS:
                     roll['done'] = np.hstack((roll['done'], done))
 
                     n = n + 1
-                    if n >= n_samples:
+                    if n >= nb_samples:
                         roll['done'][-1] = True
                         rollouts.append(roll)
                         data = merge(*rollouts)
@@ -286,23 +286,23 @@ class REPS:
 
             rollouts.append(roll)
 
-    def evaluate(self, n_rollouts, n_steps, render=False):
+    def evaluate(self, nb_rollouts, nb_steps, render=False):
         rollouts = []
 
-        for n in range(n_rollouts):
-            roll = {'x': np.empty((0, self.dim_state)),
-                    'u': np.empty((0, self.dim_action)),
+        for n in range(nb_rollouts):
+            roll = {'x': np.empty((0, self.dm_state)),
+                    'u': np.empty((0, self.dm_act)),
                     'r': np.empty((0, 1))}
 
             x = self.env.reset()
 
-            for t in range(n_steps):
+            for t in range(nb_steps):
                 u = self.ctl.actions(x, False)
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.ulim, self.ulim))
                 if render:
                     self.env.render()
 
@@ -329,9 +329,9 @@ class REPS:
                   'ent': []}
 
         for it in range(nb_iter):
-            # _, eval = self.evaluate(self.n_rollouts, self.n_steps)
+            # _, eval = self.evaluate(self.nb_rollouts, self.nb_steps)
 
-            self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
+            self.rollouts, self.data = self.sample(self.nb_samples, self.nb_keep)
 
             self.ivfeatures = torch.mean(self.dual.features(self.data['xi']), dim=0, keepdim=True)
             self.vfeatures = self.dual.features(self.data['x'])
@@ -340,7 +340,7 @@ class REPS:
                             (1.0 - self.discount) * self.ivfeatures
 
             # reset parameters
-            self.dual.vfunc = RandomFourierNet(self.n_vfeat, 1)
+            self.dual.vfunc = RandomFourierNet(self.nb_vfeat, 1)
             self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
 
             dual = self.dual.minimize(self.features, self.data['r'])

@@ -33,14 +33,14 @@ def merge(*dicts):
 
 class FourierFeatures:
 
-    def __init__(self, dim_state, n_feat, band, mult):
-        self.dim_state = dim_state
-        self.n_feat = n_feat
+    def __init__(self, dm_state, nb_feat, band, mult):
+        self.dm_state = dm_state
+        self.nb_feat = nb_feat
 
-        self.freq = np.random.multivariate_normal(mean=np.zeros(self.dim_state),
+        self.freq = np.random.multivariate_normal(mean=np.zeros(self.dm_state),
                                                   cov=np.diag(1.0 / (mult * band)),
-                                                  size=self.n_feat)
-        self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
+                                                  size=self.nb_feat)
+        self.shift = np.random.uniform(-np.pi, np.pi, size=self.nb_feat)
 
     def fit_transform(self, x):
         phi = np.sin(np.einsum('nk,...k->...n', self.freq, x) + self.shift)
@@ -49,26 +49,26 @@ class FourierFeatures:
 
 class Policy:
 
-    def __init__(self, dim_state, dim_action, **kwargs):
-        self.dim_state = dim_state
-        self.dim_action = dim_action
+    def __init__(self, dm_state, dm_act, **kwargs):
+        self.dm_state = dm_state
+        self.dm_act = dm_act
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
             self.mult = kwargs.get('mult', False)
-            self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat,
+            self.nb_feat = kwargs.get('nb_feat', False)
+            self.basis = FourierFeatures(self.dm_state, self.nb_feat,
                                          self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
+            self.nb_feat = int(sc.special.comb(self.degree + self.dm_state, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
-        self.K = 1e-8 * np.random.randn(self.dim_action, self.n_feat)
-        self.cov = np.eye(dim_action)
+        self.K = 1e-8 * np.random.randn(self.dm_act, self.nb_feat)
+        self.cov = np.eye(dm_act)
 
     def features(self, x):
-        return self.basis.fit_transform(x.reshape(-1, self.dim_state)).squeeze()
+        return self.basis.fit_transform(x.reshape(-1, self.dm_state)).squeeze()
 
     def mean(self, x):
         feat = self.features(x)
@@ -94,7 +94,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(self.cov), diff), axis=0) -
-                    self.dim_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    self.dm_act + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def klm(self, pi, x):
@@ -102,7 +102,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(pi.cov) @ self.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(pi.cov), diff), axis=0) -
-                    self.dim_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
+                    self.dm_act + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
         return kl
 
     def entropy(self):
@@ -158,21 +158,21 @@ class Policy:
 
 class Vfunction:
 
-    def __init__(self, dim_state, **kwargs):
-        self.dim_state = dim_state
+    def __init__(self, dm_state, **kwargs):
+        self.dm_state = dm_state
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
             self.mult = kwargs.get('mult', False)
-            self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state, self.n_feat,
+            self.nb_feat = kwargs.get('nb_feat', False)
+            self.basis = FourierFeatures(self.dm_state, self.nb_feat,
                                          self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(sc.special.comb(self.degree + self.dim_state, self.degree))
+            self.nb_feat = int(sc.special.comb(self.degree + self.dm_state, self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
-        self.omega = 1e-8 * np.random.randn(self.n_feat)
+        self.omega = 1e-8 * np.random.randn(self.nb_feat)
 
     def features(self, x):
         return self.basis.fit_transform(x)
@@ -184,22 +184,22 @@ class Vfunction:
 
 class Qfunction:
 
-    def __init__(self, dim_state, dim_action, **kwargs):
-        self.dim_state = dim_state
-        self.dim_action = dim_action
+    def __init__(self, dm_state, dm_act, **kwargs):
+        self.dm_state = dm_state
+        self.dm_act = dm_act
 
         if 'band' in kwargs:
             self.band = kwargs.get('band', False)
             self.mult = kwargs.get('mult', False)
-            self.n_feat = kwargs.get('n_feat', False)
-            self.basis = FourierFeatures(self.dim_state + self.dim_action,
-                                         self.n_feat, self.band, self.mult)
+            self.nb_feat = kwargs.get('nb_feat', False)
+            self.basis = FourierFeatures(self.dm_state + self.dm_act,
+                                         self.nb_feat, self.band, self.mult)
         else:
             self.degree = kwargs.get('degree', False)
-            self.n_feat = int(sc.special.comb(self.degree + (self.dim_state + self.dim_action), self.degree))
+            self.nb_feat = int(sc.special.comb(self.degree + (self.dm_state + self.dm_act), self.degree))
             self.basis = PolynomialFeatures(self.degree)
 
-        self.theta = 1e-8 * np.random.randn(self.n_feat)
+        self.theta = 1e-8 * np.random.randn(self.nb_feat)
 
     def features(self, x, u):
         _in = np.hstack((x, u))
@@ -213,19 +213,19 @@ class Qfunction:
 class acREPS:
 
     def __init__(self, env,
-                 n_samples, n_keep, n_rollouts,
+                 nb_samples, nb_keep, nb_rollouts,
                  kl_bound, discount, lmbda,
                  vreg, preg, cov0,
                  **kwargs):
 
         self.env = env
 
-        self.dim_state = self.env.observation_space.shape[0]
-        self.dim_action = self.env.action_space.shape[0]
+        self.dm_state = self.env.observation_space.shape[0]
+        self.dm_act = self.env.action_space.shape[0]
 
-        self.n_samples = n_samples
-        self.n_keep = n_keep
-        self.n_rollouts = n_rollouts
+        self.nb_samples = nb_samples
+        self.nb_keep = nb_keep
+        self.nb_rollouts = nb_rollouts
 
         self.kl_bound = kl_bound
         self.discount = discount
@@ -239,31 +239,31 @@ class acREPS:
             self.sa_band = kwargs.get('sa_band', False)
             self.mult = kwargs.get('mult', False)
 
-            self.n_vfeat = kwargs.get('n_vfeat', False)
-            self.n_pfeat = kwargs.get('n_pfeat', False)
+            self.nb_vfeat = kwargs.get('nb_vfeat', False)
+            self.nb_pfeat = kwargs.get('nb_pfeat', False)
 
-            self.vfunc = Vfunction(self.dim_state, n_feat=self.n_vfeat,
+            self.vfunc = Vfunction(self.dm_state, nb_feat=self.nb_vfeat,
                                    band=self.s_band, mult=self.mult)
 
-            self.qfunc = Qfunction(self.dim_state, self.dim_action, n_feat=self.n_vfeat,
+            self.qfunc = Qfunction(self.dm_state, self.dm_act, nb_feat=self.nb_vfeat,
                                    band=self.sa_band, mult=self.mult)
 
-            self.ctl = Policy(self.dim_state, self.dim_action, n_feat=self.n_pfeat,
+            self.ctl = Policy(self.dm_state, self.dm_act, nb_feat=self.nb_pfeat,
                               band=self.s_band, mult=self.mult)
         else:
             self.vdgr = kwargs.get('vdgr', False)
             self.pdgr = kwargs.get('pdgr', False)
 
-            self.vfunc = Vfunction(self.dim_state, degree=self.vdgr)
-            self.n_vfeat = self.vfunc.n_feat
+            self.vfunc = Vfunction(self.dm_state, degree=self.vdgr)
+            self.nb_vfeat = self.vfunc.nb_feat
 
-            self.qfunc = Qfunction(self.dim_state, self.dim_action, degree=self.vdgr)
+            self.qfunc = Qfunction(self.dm_state, self.dm_act, degree=self.vdgr)
 
-            self.ctl = Policy(self.dim_state, self.dim_action, degree=self.pdgr)
-            self.n_pfeat = self.ctl.n_feat
+            self.ctl = Policy(self.dm_state, self.dm_act, degree=self.pdgr)
+            self.nb_pfeat = self.ctl.nb_feat
 
         self.ctl.cov = cov0 * self.ctl.cov
-        self.action_limit = self.env.action_space.high
+        self.ulim = self.env.action_space.high
 
         self.data = {}
         self.rollouts = []
@@ -277,17 +277,17 @@ class acREPS:
 
         self.eta = np.array([1.0])
 
-    def sample(self, n_samples, n_keep=0, stoch=True, render=False):
-        if len(self.rollouts) >= n_keep:
-            rollouts = random.sample(self.rollouts, n_keep)
+    def sample(self, nb_samples, nb_keep=0, stoch=True, render=False):
+        if len(self.rollouts) >= nb_keep:
+            rollouts = random.sample(self.rollouts, nb_keep)
         else:
             rollouts = []
 
         n = 0
         while True:
-            roll = {'x': np.empty((0, self.dim_state)),
-                    'u': np.empty((0, self.dim_action)),
-                    'xn': np.empty((0, self.dim_state)),
+            roll = {'x': np.empty((0, self.dm_state)),
+                    'u': np.empty((0, self.dm_act)),
+                    'xn': np.empty((0, self.dm_state)),
                     'r': np.empty((0,)),
                     'done': np.empty((0,), np.int64)}
 
@@ -300,7 +300,7 @@ class acREPS:
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.ulim, self.ulim))
                 if render:
                     self.env.render()
 
@@ -309,7 +309,7 @@ class acREPS:
                 roll['done'] = np.hstack((roll['done'], done))
 
                 n = n + 1
-                if n >= n_samples:
+                if n >= nb_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     data = merge(*rollouts)
@@ -317,12 +317,12 @@ class acREPS:
 
             rollouts.append(roll)
 
-    def evaluate(self, n_rollouts, stoch=False, render=False):
+    def evaluate(self, nb_rollouts, stoch=False, render=False):
         rollouts = []
 
-        for n in range(n_rollouts):
-            roll = {'x': np.empty((0, self.dim_state)),
-                    'u': np.empty((0, self.dim_action)),
+        for n in range(nb_rollouts):
+            roll = {'x': np.empty((0, self.dm_state)),
+                    'u': np.empty((0, self.dm_act)),
                     'r': np.empty((0,))}
 
             x = self.env.reset()
@@ -334,7 +334,7 @@ class acREPS:
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.action_limit, self.action_limit))
+                x, r, done, _ = self.env.step(np.clip(u, - self.ulim, self.ulim))
                 if render:
                     self.env.render()
 
@@ -360,7 +360,7 @@ class acREPS:
             absorbing = np.argwhere(roll['done']).flatten()
             roll['nphi'][absorbing, :] *= 0.0
 
-        _K = self.qfunc.n_feat * self.qfunc.dim_action
+        _K = self.qfunc.nb_feat * self.qfunc.dm_act
 
         _A = np.zeros((_K, _K))
         _b = np.zeros((_K,))
@@ -485,9 +485,9 @@ class acREPS:
                   'ent': []}
 
         for it in range(nb_iter):
-            _, eval = self.evaluate(self.n_rollouts)
+            _, eval = self.evaluate(self.nb_rollouts)
 
-            self.rollouts, self.data = self.sample(self.n_samples, self.n_keep)
+            self.rollouts, self.data = self.sample(self.nb_samples, self.nb_keep)
             self.vfeatures = self.featurize(self.data)
 
             # self.qfunc.theta, self.rollouts, self.data = self.lstd(self.rollouts, gamma=self.discount, lmbda=self.lmbda)
@@ -499,7 +499,7 @@ class acREPS:
                                     self.discount, self.lmbda)
 
             res = sc.optimize.minimize(self.dual,
-                                       np.hstack((1.0, 1e-8 * np.random.randn(self.n_vfeat))),
+                                       np.hstack((1.0, 1e-8 * np.random.randn(self.nb_vfeat))),
                                        # np.hstack((1.0, self.vfunc.omega)),
                                        method='L-BFGS-B',
                                        jac=grad(self.dual),
@@ -507,11 +507,11 @@ class acREPS:
                                            self.kl_bound,
                                            self.vfeatures,
                                            self.targets),
-                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.n_vfeat)
+                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.nb_vfeat)
 
             self.eta, self.vfunc.omega = res.x[0], res.x[1:]
 
-            # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.n_vfeat)
+            # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.nb_vfeat)
             # for _ in range(250):
             #     res = sc.optimize.minimize(self.dual_eta,
             #                                self.eta,

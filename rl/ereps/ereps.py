@@ -13,15 +13,15 @@ EXP_MIN = -700.0
 
 class Policy:
 
-    def __init__(self, d_action, cov0):
-        self.d_action = d_action
+    def __init__(self, dm_act, cov0):
+        self.dm_act = dm_act
 
-        self.mu = np.random.randn(self.d_action)
-        self.cov = cov0 * np.eye(self.d_action)
+        self.mu = np.random.randn(self.dm_act)
+        self.cov = cov0 * np.eye(self.dm_act)
 
     def action(self, n):
         aux = sc.stats.multivariate_normal(mean=self.mu, cov=self.cov).rvs(n)
-        return aux.reshape((n, self.d_action))
+        return aux.reshape((n, self.dm_act))
 
     def loglik(self, pi, x):
         mu, cov = pi.mu, pi.cov
@@ -35,14 +35,14 @@ class Policy:
         diff = self.mu - pi.mu
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) + diff.T @ np.linalg.inv(self.cov) @ diff
-                    - self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    - self.dm_act + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def klm(self, pi):
         diff = pi.mu - self.mu
 
         kl = 0.5 * (np.trace(np.linalg.inv(pi.cov) @ self.cov) + diff.T @ np.linalg.inv(pi.cov) @ diff
-                    - self.d_action + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
+                    - self.dm_act + np.log(np.linalg.det(pi.cov) / np.linalg.det(self.cov)))
         return kl
 
     def entropy(self):
@@ -82,16 +82,16 @@ class eREPS:
                  kl_bound, **kwargs):
 
         self.func = func
-        self.d_action = self.func.d_action
+        self.dm_act = self.func.dm_act
 
         self.n_episodes = n_episodes
         self.kl_bound = kl_bound
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.d_action, cov0)
+            self.ctl = Policy(self.dm_act, cov0)
         else:
-            self.ctl = Policy(self.d_action, 100.0)
+            self.ctl = Policy(self.dm_act, 100.0)
 
         self.data = None
         self.w = None

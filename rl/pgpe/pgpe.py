@@ -8,16 +8,16 @@ from sklearn.preprocessing import PolynomialFeatures
 
 class Policy:
 
-    def __init__(self, d_state, d_action, pdict):
+    def __init__(self, d_state, dm_act, pdict):
         self.d_state = d_state
-        self.d_action = d_action
+        self.dm_act = dm_act
 
         self.type = 'poly'
         self.degree = pdict['degree']
-        self.n_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
+        self.nb_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
         self.basis = PolynomialFeatures(self.degree, include_bias=False)
 
-        self.n_param = self.d_action * self.n_feat
+        self.n_param = self.dm_act * self.nb_feat
         self.K = 1e-8 * np.random.randn(self.n_param)
         self.cov = pdict['cov0'] * np.eye(self.n_param)
 
@@ -26,7 +26,7 @@ class Policy:
 
     def mean(self, x):
         feat = self.features(x)
-        return np.einsum('...k,mk->...m', feat, self.K.reshape(self.d_action, self.d_state))
+        return np.einsum('...k,mk->...m', feat, self.K.reshape(self.dm_act, self.d_state))
 
     def actions(self, x):
         return self.mean(x)
@@ -44,7 +44,7 @@ class PGPE:
         self.env = env
 
         self.d_state = self.env.observation_space.shape[0]
-        self.d_action = self.env.action_space.shape[0]
+        self.dm_act = self.env.action_space.shape[0]
 
         self.alim = self.env.action_space.high
 
@@ -54,7 +54,7 @@ class PGPE:
         self.alpha = alpha
         self.beta = beta
 
-        self.ctl = Policy(self.d_state, self.d_action, pdict)
+        self.ctl = Policy(self.d_state, self.dm_act, pdict)
 
         self.rollouts = None
 
@@ -63,7 +63,7 @@ class PGPE:
 
         for _ in range(n_episodes):
             roll = {'x': np.empty((0, self.d_state)),
-                    'u': np.empty((0, self.d_action)),
+                    'u': np.empty((0, self.dm_act)),
                     'xn': np.empty((0, self.d_state)),
                     'done': np.empty((0,), np.int64),
                     'r': np.empty((0,))}

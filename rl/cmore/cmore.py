@@ -12,20 +12,20 @@ import copy
 
 class Policy:
 
-    def __init__(self, d_cntxt, d_action, degree, cov0):
-        self.d_cntxt = d_cntxt
-        self.d_action = d_action
+    def __init__(self, dm_cntxt, dm_act, degree, cov0):
+        self.dm_cntxt = dm_cntxt
+        self.dm_act = dm_act
 
         self.degree = degree
         self.basis = PolynomialFeatures(self.degree, include_bias=False)
-        self.n_feat = int(sc.special.comb(self.degree + self.d_cntxt, self.degree) - 1)
+        self.nb_feat = int(sc.special.comb(self.degree + self.dm_cntxt, self.degree) - 1)
 
-        self.b = 1e-8 * np.random.randn(self.d_action, )
-        self.K = 1e-8 * np.random.randn(self.d_action, self.n_feat)
-        self.cov = cov0 * np.eye(d_action)
+        self.b = 1e-8 * np.random.randn(self.dm_act, )
+        self.K = 1e-8 * np.random.randn(self.dm_act, self.nb_feat)
+        self.cov = cov0 * np.eye(dm_act)
 
     def features(self, c):
-        return self.basis.fit_transform(c.reshape(-1, self.d_cntxt))
+        return self.basis.fit_transform(c.reshape(-1, self.dm_cntxt))
 
     def mean(self, c):
         feat = self.features(c)
@@ -43,7 +43,7 @@ class Policy:
 
         kl = 0.5 * (np.trace(np.linalg.inv(self.cov) @ pi.cov) +
                     np.mean(np.einsum('nk,kh,nh->n', diff, np.linalg.inv(self.cov), diff), axis=0) -
-                    self.d_action + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
+                    self.dm_act + np.log(np.linalg.det(self.cov) / np.linalg.det(pi.cov)))
         return kl
 
     def entropy(self):
@@ -71,20 +71,20 @@ class Policy:
 
 class Model:
 
-    def __init__(self, d_action, n_cfeat):
+    def __init__(self, dm_act, n_cfeat):
         self.n_cfeat = n_cfeat
-        self.d_action = d_action
+        self.dm_act = dm_act
 
-        self.R = np.zeros((self.d_action + self.n_cfeat, self.d_action + self.n_cfeat))
-        self.r = np.zeros((self.d_action + self.n_cfeat, ))
+        self.R = np.zeros((self.dm_act + self.n_cfeat, self.dm_act + self.n_cfeat))
+        self.r = np.zeros((self.dm_act + self.n_cfeat, ))
 
-        self.Raa = np.zeros((self.d_action, self.d_action))
-        self.ra = np.zeros((self.d_action,))
+        self.Raa = np.zeros((self.dm_act, self.dm_act))
+        self.ra = np.zeros((self.dm_act,))
 
         self.Rcc = np.zeros((self.n_cfeat, self.n_cfeat))
         self.rc = np.zeros((self.n_cfeat, ))
 
-        self.Rac = np.zeros((self.d_action, self.n_cfeat))
+        self.Rac = np.zeros((self.dm_act, self.n_cfeat))
 
         self.r0 = np.zeros((1, ))
 
@@ -99,18 +99,18 @@ class Model:
         par = reg.coef_
 
         self.r0 = par[0]
-        self.r = par[1:self.d_action + self.n_cfeat + 1]
+        self.r = par[1:self.dm_act + self.n_cfeat + 1]
 
-        uid = np.triu_indices(self.d_action + self.n_cfeat)
-        self.R[uid] = par[self.d_action + self.n_cfeat + 1:]
+        uid = np.triu_indices(self.dm_act + self.n_cfeat)
+        self.R[uid] = par[self.dm_act + self.n_cfeat + 1:]
         self.R.T[uid] = self.R[uid]
 
-        self.Raa = self.R[:self.d_action, :self.d_action]
+        self.Raa = self.R[:self.dm_act, :self.dm_act]
         self.Rcc = self.R[-self.n_cfeat:, -self.n_cfeat:]
-        self.Rac = self.R[:self.d_action, -self.n_cfeat:]
+        self.Rac = self.R[:self.dm_act, -self.n_cfeat:]
 
-        self.ra = 2.0 * self.r[:self.d_action]
-        self.rc = 2.0 * self.r[self.d_action:]
+        self.ra = 2.0 * self.r[:self.dm_act]
+        self.rc = 2.0 * self.r[self.dm_act:]
 
         # check for positive definitness
         w, v = np.linalg.eig(self.Raa)
@@ -126,8 +126,8 @@ class cMORE:
                  cdgr, **kwargs):
 
         self.func = func
-        self.d_action = self.func.d_action
-        self.d_cntxt = self.func.d_cntxt
+        self.dm_act = self.func.dm_act
+        self.dm_cntxt = self.func.dm_cntxt
 
         self.n_episodes = n_episodes
 
@@ -137,14 +137,14 @@ class cMORE:
         self.cdgr = cdgr
 
         self.basis = PolynomialFeatures(self.cdgr, include_bias=False)
-        self.n_cfeat = int(sc.special.comb(self.cdgr + self.d_cntxt, self.cdgr) - 1)
+        self.n_cfeat = int(sc.special.comb(self.cdgr + self.dm_cntxt, self.cdgr) - 1)
 
         if 'cov0' in kwargs:
             cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.d_action, self.d_cntxt,
+            self.ctl = Policy(self.dm_act, self.dm_cntxt,
                               self.cdgr, cov0)
         else:
-            self.ctl = Policy(self.d_action, self.d_cntxt,
+            self.ctl = Policy(self.dm_act, self.dm_cntxt,
                               self.cdgr, 100.0)
 
         if 'h0' in kwargs:
@@ -152,7 +152,7 @@ class cMORE:
         else:
             self.h0 = 75.0
 
-        self.model = Model(self.d_action, self.n_cfeat)
+        self.model = Model(self.dm_act, self.n_cfeat)
 
         self.eta = np.array([1.0])
         self.omega = np.array([1.0])
@@ -167,7 +167,7 @@ class cMORE:
         return data
 
     def features(self, c):
-        return self.basis.fit_transform(c.reshape(-1, self.d_cntxt))
+        return self.basis.fit_transform(c.reshape(-1, self.dm_cntxt))
 
     def dual(self, var, eps, beta, ctl, model, phi):
         eta = var[0]
@@ -221,7 +221,7 @@ class cMORE:
 
         deta0 = eps - 0.5 * b.T @ df_deta + 0.5 * f.T @ dFi_deta @ f + f.T @ (Fi @ df_deta)\
                - 0.5 * q_lgdt + 0.5 * f_lgdt - 0.5 * (eta + omega) * np.trace(Fi @ Qi)\
-               + 0.5 * self.d_action
+               + 0.5 * self.dm_act
 
         detal = L.T @ (Fi @ df_deta) - L.T @ (Fi.T @ (Qi @ (Fi @ f)))\
                + (Qi @ K).T @ (Fi @ f) - K.T @ (Qi @ b)
@@ -230,7 +230,7 @@ class cMORE:
 
         deta = deta0 + np.mean(phi @ detal, axis=0) + np.mean(np.sum((phi @ detaq).T * phi.T, axis=0))
 
-        domega = - beta + 0.5 * (f_lgdt + self.d_action)
+        domega = - beta + 0.5 * (f_lgdt + self.dm_act)
 
         return np.hstack([deta, domega])
 

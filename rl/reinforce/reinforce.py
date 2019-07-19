@@ -7,14 +7,14 @@ from sklearn.preprocessing import PolynomialFeatures
 
 class FourierFeatures:
 
-    def __init__(self, d_state, n_feat, band):
+    def __init__(self, d_state, nb_feat, band):
         self.d_state = d_state
-        self.n_feat = n_feat
+        self.nb_feat = nb_feat
 
         self.freq = np.random.multivariate_normal(mean=np.zeros(self.d_state),
                                                   cov=np.diag(1.0 / band),
-                                                  size=self.n_feat)
-        self.shift = np.random.uniform(-np.pi, np.pi, size=self.n_feat)
+                                                  size=self.nb_feat)
+        self.shift = np.random.uniform(-np.pi, np.pi, size=self.nb_feat)
 
     def fit_transform(self, x):
         phi = np.sin(np.einsum('nk,...k->...n', self.freq, x) + self.shift)
@@ -23,23 +23,23 @@ class FourierFeatures:
 
 class Policy:
 
-    def __init__(self, d_state, d_action, pdict):
+    def __init__(self, d_state, dm_act, pdict):
         self.d_state = d_state
-        self.d_action = d_action
+        self.dm_act = dm_act
 
         self.type = pdict['type']
 
         if self.type == 'fourier':
             self.band = pdict['band']
-            self.n_feat = pdict['n_feat']
-            self.basis = FourierFeatures(self.d_state, self.n_feat, self.band)
+            self.nb_feat = pdict['nb_feat']
+            self.basis = FourierFeatures(self.d_state, self.nb_feat, self.band)
         else:
             self.degree = pdict['degree']
-            self.n_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
+            self.nb_feat = int(sc.special.comb(self.degree + self.d_state, self.degree)) - 1
             self.basis = PolynomialFeatures(self.degree, include_bias=False)
 
-        self.K = 1e-8 * np.random.randn(self.d_action, self.n_feat)
-        self.cov = np.eye(d_action)
+        self.K = 1e-8 * np.random.randn(self.dm_act, self.nb_feat)
+        self.cov = np.eye(dm_act)
 
     def features(self, x):
         return self.basis.fit_transform(x.reshape(-1, self.d_state)).squeeze()
@@ -61,31 +61,31 @@ class Policy:
 
 class REINFORCE:
 
-    def __init__(self, env, n_samples, discount, alpha, pdict):
+    def __init__(self, env, nb_samples, discount, alpha, pdict):
         self.env = env
 
         self.d_state = self.env.observation_space.shape[0]
-        self.d_action = self.env.action_space.shape[0]
+        self.dm_act = self.env.action_space.shape[0]
 
         self.alim = self.env.action_space.high
 
-        self.n_samples = n_samples
+        self.nb_samples = nb_samples
         self.discount = discount
 
         self.alpha = alpha
 
-        self.ctl = Policy(self.d_state, self.d_action, pdict)
+        self.ctl = Policy(self.d_state, self.dm_act, pdict)
         self.ctl.cov = 0.01 * self.ctl.cov
 
         self.rollouts = None
 
-    def sample(self, n_samples, stoch=True):
+    def sample(self, nb_samples, stoch=True):
         rollouts = []
 
         n = 0
         while True:
             roll = {'x': np.empty((0, self.d_state)),
-                    'u': np.empty((0, self.d_action)),
+                    'u': np.empty((0, self.dm_act)),
                     'xn': np.empty((0, self.d_state)),
                     'done': np.empty((0,), np.int64),
                     'r': np.empty((0,))}
@@ -105,7 +105,7 @@ class REINFORCE:
                 roll['r'] = np.hstack((roll['r'], r))
 
                 n += 1
-                if n >= n_samples:
+                if n >= nb_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     return rollouts
@@ -113,11 +113,11 @@ class REINFORCE:
             rollouts.append(roll)
 
     def baseline(self, returns, gradient):
-        _norm = np.zeros((self.ctl.n_feat, ))
+        _norm = np.zeros((self.ctl.nb_feat, ))
         for g in gradient:
             _norm += np.sum(g, axis=0)**2
 
-        _b = np.zeros((self.ctl.n_feat, ))
+        _b = np.zeros((self.ctl.nb_feat, ))
         for r, g in zip(returns, gradient):
             _b += np.sum(g, axis=0)**2 * r / _norm
 
@@ -127,7 +127,7 @@ class REINFORCE:
         _trace = {'rwrd': []}
 
         for it in range(nb_iter):
-            self.rollouts = self.sample(n_samples=self.n_samples)
+            self.rollouts = self.sample(nb_samples=self.nb_samples)
 
             _return = []
             for roll in self.rollouts:
@@ -141,7 +141,7 @@ class REINFORCE:
 
             _baseline = self.baseline(_return, _grad)
 
-            _wgrad = np.zeros((self.ctl.n_feat, ))
+            _wgrad = np.zeros((self.ctl.nb_feat, ))
             for r, g in zip(_return, _grad):
                 _wgrad += np.sum(g, axis=0) * (r - _baseline) / len(_return)
 

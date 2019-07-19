@@ -3,9 +3,9 @@ import numpy as np
 
 class Policy:
 
-    def __init__(self, d_state, d_action, pdict):
+    def __init__(self, d_state, dm_act, pdict):
         self.d_state = d_state
-        self.d_action = d_action
+        self.dm_act = dm_act
 
         self.type = pdict['type']
 
@@ -27,14 +27,14 @@ class Policy:
     def action(self, qfunc, x):
         if self.type == 'softmax':
             pmf = np.exp(np.clip(qfunc[x, :] / self.beta, -700, 700))
-            return np.random.choice(self.d_action, p=pmf/np.sum(pmf))
+            return np.random.choice(self.dm_act, p=pmf/np.sum(pmf))
         elif self.type == 'greedy':
             if self.eps >= np.random.rand():
-                return np.random.choice(self.d_action)
+                return np.random.choice(self.dm_act)
             else:
                 return np.argmax(qfunc[x, :])
         else:
-            return np.random.choice(self.d_action, p=self.weights)
+            return np.random.choice(self.dm_act, p=self.weights)
 
 
 class QLearning:
@@ -43,21 +43,21 @@ class QLearning:
         self.env = env
 
         self.d_state = 16  # self.env.observation_space.shape[0]
-        self.d_action = 4  # self.env.action_space.shape[0]
+        self.dm_act = 4  # self.env.action_space.shape[0]
 
         self.discount = discount
 
-        self.ctl = Policy(self.d_state, self.d_action, pdict)
+        self.ctl = Policy(self.d_state, self.dm_act, pdict)
 
         self.alpha = alpha
 
         self.vfunc = np.zeros((self.d_state, ))
-        self.qfunc = np.zeros((self.d_state, self.d_action))
+        self.qfunc = np.zeros((self.d_state, self.dm_act))
 
         self.td_error = []
         self.rollouts = None
 
-    def run(self, n_samples):
+    def run(self, nb_samples):
         score = np.empty((0, 1))
 
         rollouts = []
@@ -106,7 +106,7 @@ class QLearning:
                     score[n_eps % 100] = r
 
                 n_samp += 1
-                if n_samp >= n_samples:
+                if n_samp >= nb_samples:
                     roll['done'][-1] = True
                     rollouts.append(roll)
                     return rollouts
