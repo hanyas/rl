@@ -7,6 +7,7 @@ from scipy import stats
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
 
 import random
 import copy
@@ -113,8 +114,12 @@ class Policy:
 
         psi = self.features(x)
 
-        _inv = np.linalg.inv(psi.T @ np.diag(w) @ psi + preg * np.eye(psi.shape[1]))
-        pol.K = u.T @ np.diag(w) @ psi @ _inv
+        reg = Ridge(alpha=preg, fit_intercept=False)
+        reg.fit(psi, u, sample_weight=w)
+        pol.K = reg.coef_
+
+        # _inv = np.linalg.pinv(psi.T @ np.diag(w) @ psi + preg * np.eye(psi.shape[1]))
+        # pol.K = u.T @ np.diag(w) @ psi @ _inv
 
         std = u - pol.mean(x)
         pol.cov = np.sum(np.einsum('nk,n,nh->nkh', std, w, std), axis=0) / np.sum(w)
@@ -231,6 +236,7 @@ class REPS:
             self.nb_pfeat = self.ctl.nb_feat
 
         self.ctl.cov = cov0 * self.ctl.cov
+        self.ulim = self.env.action_space.high
 
         self.data = {}
         self.rollouts = []
@@ -265,6 +271,7 @@ class REPS:
             done = False
             while not done:
                 u = self.ctl.actions(x, stoch)
+                # u = np.clip(u, -self.ulim, self.ulim)
 
                 if reset and coin.rvs():
                     done = True
@@ -273,7 +280,7 @@ class REPS:
                     roll['x'] = np.vstack((roll['x'], x))
                     roll['u'] = np.vstack((roll['u'], u))
 
-                    x, r, done, _ = self.env.step(u)
+                    x, r, done, _ = self.env.step(np.clip(u, -self.ulim, self.ulim))
                     if render:
                         self.env.render()
 
@@ -302,11 +309,12 @@ class REPS:
 
             for t in range(nb_steps):
                 u = self.ctl.actions(x, stoch)
+                # u = np.clip(u, -self.ulim, self.ulim)
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(u)
+                x, r, done, _ = self.env.step(np.clip(u, -self.ulim, self.ulim))
                 if render:
                     self.env.render()
 
@@ -398,76 +406,70 @@ class REPS:
             self.rollouts, self.data = self.sample(self.nb_samples, self.nb_keep)
             self.features = self.featurize(self.data)
 
-            # res = sc.optimize.minimize(self.dual,
-            #                            np.hstack((1.0, 1e-8 * np.random.randn(self.nb_vfeat))),
-            #                            # np.hstack((1.0, self.vfunc.omega)),
-            #                            method='L-BFGS-B',
-            #                            jac=grad(self.dual),
-            #                            args=(
-            #                                self.kl_bound,
-            #                                self.features,
-            #                                self.data['r']),
-            #                            bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.nb_vfeat)
+            res = sc.optimize.minimize(self.dual,
+                                       np.hstack((1.0, 1e-8 * np.random.randn(self.nb_vfeat))),
+                                       # np.hstack((1.0, self.vfunc.omega)),
+                                       method='L-BFGS-B',
+                                       jac=grad(self.dual),
+                                       args=(self.kl_bound,
+                                             self.features,
+                                             self.data['r']),
+                                       bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.nb_vfeat)
+            self.eta, self.vfunc.omega = res.x[0], res.x[1:]
+
+            # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.nb_vfeat)
+            # for _ in range(250):
+            #     res = sc.optimize.minimize(self.dual_eta,
+            #                                self.eta,
+            #                                method='L-BFGS-B',
+            #                                jac=grad(self.dual_eta),
+            #                                args=(self.vfunc.omega,
+            #                                      self.kl_bound,
+            #                                      self.features,
+            #                                      self.data['r']),
+            #                                bounds=((1e-8, 1e8),),
+            #                                options={'maxiter': 5})
+            #     # print(res)
+            #     #
+            #     # check = sc.optimize.check_grad(self.dual_eta,
+            #     #                                self.grad_eta,
+            #     #                                res.x,
+            #     #                                self.vfunc.omega,
+            #     #                                self.kl_bound,
+            #     #                                self.features,
+            #     #                                self.data['r'])
+            #     # print('Eta Error', check)
             #
-            # self.eta, self.vfunc.omega = res.x[0], res.x[1:]
-
-            self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.nb_vfeat)
-            for _ in range(250):
-                res = sc.optimize.minimize(self.dual_eta,
-                                           self.eta,
-                                           method='SLSQP',
-                                           jac=grad(self.dual_eta),
-                                           args=(
-                                                self.vfunc.omega,
-                                                self.kl_bound,
-                                                self.features,
-                                                self.data['r']),
-                                           bounds=((1e-8, 1e8),),
-                                           options={'maxiter': 5})
-                # print(res)
-                #
-                # check = sc.optimize.check_grad(self.dual_eta,
-                #                                self.grad_eta,
-                #                                res.x,
-                #                                self.vfunc.omega,
-                #                                self.kl_bound,
-                #                                self.features,
-                #                                self.data['r'])
-                # print('Eta Error', check)
-
-                self.eta = res.x
-
-                res = sc.optimize.minimize(self.dual_omega,
-                                           self.vfunc.omega,
-                                           method='BFGS',
-                                           jac=grad(self.dual_omega),
-                                           args=(
-                                               self.eta,
-                                               self.features,
-                                               self.data['r']),
-                                           options={'maxiter': 250})
-
-                # res = sc.optimize.minimize(self.dual_omega,
-                #                            self.vfunc.omega,
-                #                            method='trust-exact',
-                #                            jac=grad(self.dual_omega),
-                #                            hess=jacobian(grad(self.dual_omega)),
-                #                            args=(
-                #                                self.eta,
-                #                                self.features,
-                #                                self.data['r']))
-                #
-                # # print(res)
-                #
-                # check = sc.optimize.check_grad(self.dual_omega,
-                #                                self.grad_omega,
-                #                                res.x,
-                #                                self.eta,
-                #                                self.features,
-                #                                self.data['r'])
-                # print('Omega Error', check)
-
-                self.vfunc.omega = res.x
+            #     self.eta = res.x
+            #
+            #     res = sc.optimize.minimize(self.dual_omega,
+            #                                self.vfunc.omega,
+            #                                method='BFGS',
+            #                                jac=grad(self.dual_omega),
+            #                                args=(self.eta,
+            #                                      self.features,
+            #                                      self.data['r']),
+            #                                options={'maxiter': 250})
+            #
+            #     # res = sc.optimize.minimize(self.dual_omega,
+            #     #                            self.vfunc.omega,
+            #     #                            method='trust-exact',
+            #     #                            jac=grad(self.dual_omega),
+            #     #                            hess=jacobian(grad(self.dual_omega)),
+            #     #                            args=(self.eta,
+            #     #                                  self.features,
+            #     #                                  self.data['r']))
+            #     # # print(res)
+            #     #
+            #     # check = sc.optimize.check_grad(self.dual_omega,
+            #     #                                self.grad_omega,
+            #     #                                res.x,
+            #     #                                self.eta,
+            #     #                                self.features,
+            #     #                                self.data['r'])
+            #     # print('Omega Error', check)
+            #
+            #     self.vfunc.omega = res.x
 
             self.w, _, _ = self.weights(self.eta, self.vfunc.omega, self.features, self.data['r'])
 

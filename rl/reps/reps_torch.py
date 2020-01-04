@@ -2,11 +2,16 @@ import numpy as np
 import scipy as sc
 from scipy import stats
 
+import math
+
 import torch
 import torch.nn as nn
 
 from itertools import islice
 import random
+
+to_torch = lambda arr: torch.from_numpy(arr).float()
+to_npy = lambda arr: arr.detach().double().numpy()
 
 
 EXP_MAX = 700.0
@@ -34,17 +39,6 @@ def batches(batch_size, data_size):
     yield from iter(lambda: list(islice(idx_iter, batch_size)), [])
 
 
-class RandomFourierNet(nn.Module):
-
-    def __init__(self, input_dim, output_dim):
-        super(RandomFourierNet, self).__init__()
-        self.linear = nn.Linear(input_dim, output_dim, bias=False)
-        self.linear.weight = torch.nn.Parameter(1e-8 * torch.ones(output_dim, input_dim))
-
-    def forward(self, x):
-        return self.linear(x)
-
-
 class FourierFeatures:
 
     def __init__(self, dm_state, nb_feat, band, mult):
@@ -62,12 +56,13 @@ class FourierFeatures:
         return phi
 
 
-class Policy:
+class Policy(nn.Module):
 
     def __init__(self, dm_state, dm_act,
                  cov, band, nb_feat, mult,
-                 n_epochs=200, n_batch=64,
+                 nb_epochs=250, batch_size=64,
                  lr=1e-3):
+        super(Policy, self).__init__()
 
         self.dm_state = dm_state
         self.dm_act = dm_act
@@ -79,59 +74,59 @@ class Policy:
         self.basis = FourierFeatures(self.dm_state, self.nb_feat,
                                      self.band, self.mult)
 
-        self.mu = RandomFourierNet(self.nb_feat, self.dm_act)
-        self.log_std = torch.tensor(self.dm_act * [np.log(np.sqrt(cov))],
-                                    requires_grad=True,
-                                    dtype=torch.float32)
+        self.mu = nn.Linear(self.nb_feat, self.dm_act, bias=False)
 
-        self.n_epochs = n_epochs
-        self.n_batch = n_batch
+        _cov = cov * torch.eye(self.dm_act)
+        self.log_std = nn.Parameter(self.dm_act * torch.log(torch.sqrt(_cov)))
+
+        self.nb_epochs = nb_epochs
+        self.batch_size = batch_size
         self.lr = lr
-        self.opt = torch.optim.Adam([{'params': self.mu.parameters()},
-                                     {'params': self.log_std}], lr=self.lr)
+
+        self.opt = torch.optim.Adam(self.parameters(), lr=self.lr)
 
     @torch.no_grad()
     def features(self, x):
-        return torch.as_tensor(self.basis.fit_transform(x), dtype=torch.float32)
+        return to_torch(self.basis.fit_transform(x))
 
     @torch.no_grad()
-    def actions(self, x, stoch):
+    def forward(self, x, stoch):
         feat = self.features(x)
-        with torch.no_grad():
-            mean = self.mu(feat)
-            if stoch:
-                return torch.normal(mean, torch.exp(self.log_std))
-            else:
-                return mean
+        if stoch:
+            return torch.normal(self.mu(feat), torch.exp(self.log_std))
+        else:
+            return self.mu(feat)
 
     @torch.no_grad()
     def entropy(self):
-        return 0.5 * np.log(torch.exp(self.log_std)**2 * 2.0 * np.pi * np.exp(1.0)).numpy().squeeze()
+        return 0.5 * torch.log(torch.det(torch.exp(self.log_std)**2) * 2.0 * math.pi * math.e)
 
-    def loss(self, u, feat, w):
+    def log_likelihood(self, u, feat, w):
         a = self.mu(feat)
         var = torch.exp(self.log_std) ** 2
-        log_prob = - (u - a) ** 2 / (2.0 * var) - self.log_std
-        l = - torch.mean(w * log_prob)
-        return l
+        log_lik = - (u - a) ** 2 / (2.0 * var) - self.log_std
+        ll = - torch.mean(w * log_lik)
+        return ll
 
     def minimize(self, u, feat, w):
         loss = None
-        for epoch in range(self.n_epochs):
-            for batch in batches(self.n_batch, feat.shape[0]):
-                loss = self.loss(u[batch], feat[batch], w[batch])
+        self.mu.reset_parameters()
+        for epoch in range(self.nb_epochs):
+            for batch in batches(self.batch_size, feat.shape[0]):
                 self.opt.zero_grad()
+                loss = self.log_likelihood(u[batch], feat[batch], w[batch])
                 loss.backward()
                 self.opt.step()
         return loss
 
 
-class Dual:
+class Dual(nn.Module):
 
     def __init__(self, dm_state, epsi,
                  nb_feat, band, mult,
-                 n_epochs=100, n_batch=64,
+                 nb_epochs=250, batch_size=64,
                  lr=1e-3):
+        super(Dual, self).__init__()
 
         self.dm_state = dm_state
         self.epsi = epsi
@@ -142,18 +137,18 @@ class Dual:
         self.basis = FourierFeatures(self.dm_state, self.nb_feat,
                                      self.band, self.mult)
 
-        self.vfunc = RandomFourierNet(self.nb_feat, 1)
-        self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
+        self.vfunc = nn.Linear(self.nb_feat, 1)
+        self.kappa = nn.Parameter(torch.as_tensor(1.0))
 
-        self.n_epochs = n_epochs
-        self.n_batch = n_batch
+        self.nb_epochs = nb_epochs
+        self.batch_size = batch_size
         self.lr = lr
-        self.opt = torch.optim.Adam([{'params': self.vfunc.parameters()},
-                                    {'params': self.kappa}], lr=self.lr)
+
+        self.opt = torch.optim.Adam(self.parameters(), lr=self.lr)
 
     @torch.no_grad()
     def features(self, x):
-        return torch.as_tensor(self.basis.fit_transform(x), dtype=torch.float32)
+        return to_torch(self.basis.fit_transform(x))
 
     @torch.no_grad()
     def values(self, feat):
@@ -163,7 +158,7 @@ class Dual:
     def eta(self):
         return torch.exp(self.kappa)
 
-    def loss(self, feat, r):
+    def dual(self, feat, r):
         adv = r + self.vfunc(feat)
         w = torch.exp(torch.clamp((adv - torch.max(adv)) / torch.exp(self.kappa), EXP_MIN, EXP_MAX))
         g = torch.max(adv) + torch.exp(self.kappa) * self.epsi + torch.exp(self.kappa) * torch.log(torch.mean(w))
@@ -171,10 +166,10 @@ class Dual:
 
     def minimize(self, feat, r):
         loss = None
-        for epoch in range(self.n_epochs):
-            for batch in batches(self.n_batch, feat.shape[0]):
-                loss = self.loss(feat[batch], r[batch])
+        for epoch in range(self.nb_epochs):
+            for batch in batches(self.batch_size, feat.shape[0]):
                 self.opt.zero_grad()
+                loss = self.dual(feat[batch], r[batch])
                 loss.backward()
                 self.opt.step()
         return loss
@@ -209,8 +204,8 @@ class REPS:
         self.band = band
         self.mult = mult
 
-        self.dual = Dual(self.dm_state, epsi=self.kl_bound,
-                         nb_feat=self.nb_vfeat, band=self.band, mult=self.mult)
+        self.dual = Dual(self.dm_state, nb_feat=self.nb_vfeat, band=self.band, mult=self.mult,
+                         epsi=self.kl_bound)
 
         self.ctl = Policy(self.dm_state, self.dm_act, cov=cov0,
                           nb_feat=self.nb_pfeat, band=self.band, mult=self.mult)
@@ -254,7 +249,7 @@ class REPS:
 
             done = False
             while not done:
-                u = self.ctl.actions(x, stoch)
+                u = to_npy(self.ctl.forward(x, stoch))
 
                 if reset and coin.rvs():
                     done = True
@@ -277,10 +272,10 @@ class REPS:
                         rollouts.append(roll)
                         data = merge(*rollouts)
 
-                        data['x'] = torch.from_numpy(np.stack(data['x'])).float()
-                        data['u'] = torch.from_numpy(np.stack(data['u'])).float()
-                        data['xn'] = torch.from_numpy(np.stack(data['xn'])).float()
-                        data['r'] = torch.from_numpy(np.stack(data['r'])).float()
+                        data['x'] = to_torch(data['x'])
+                        data['u'] = to_torch(data['u'])
+                        data['xn'] = to_torch(data['xn'])
+                        data['r'] = to_torch(data['r'])
 
                         return rollouts, data
 
@@ -297,7 +292,7 @@ class REPS:
             x = self.env.reset()
 
             for t in range(nb_steps):
-                u = self.ctl.actions(x, False)
+                u = to_npy(self.ctl.forward(x, False))
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
@@ -312,16 +307,16 @@ class REPS:
 
         data = merge(*rollouts)
 
-        data['x'] = torch.from_numpy(np.stack(data['x'])).float()
-        data['u'] = torch.from_numpy(np.stack(data['u'])).float()
-        data['r'] = torch.from_numpy(np.stack(data['r'])).float()
+        data['x'] = to_torch(data['x'])
+        data['u'] = to_torch(data['u'])
+        data['r'] = to_torch(data['r'])
 
         return rollouts, data
 
     def kl_samples(self, weights):
         w = torch.clamp(weights, 1e-75, np.inf)
         w = w / torch.mean(w, dim=0)
-        return torch.mean(w * torch.log(w), dim=0).numpy().squeeze()
+        return torch.mean(w * torch.log(w))
 
     def run(self, nb_iter=10, verbose=False):
         _trace = {'rwrd': [],
@@ -329,7 +324,7 @@ class REPS:
                   'ent': []}
 
         for it in range(nb_iter):
-            # _, eval = self.evaluate(self.nb_rollouts, self.nb_steps)
+            _, eval = self.evaluate(self.nb_rollouts, self.nb_steps)
 
             self.rollouts, self.data = self.sample(self.nb_samples, self.nb_keep)
 
@@ -338,10 +333,6 @@ class REPS:
             self.nvfeatures = self.dual.features(self.data['xn'])
             self.features = self.discount * self.nvfeatures - self.vfeatures +\
                             (1.0 - self.discount) * self.ivfeatures
-
-            # reset parameters
-            self.dual.vfunc = RandomFourierNet(self.nb_vfeat, 1)
-            self.kappa = torch.tensor(0.0, requires_grad=True, dtype=torch.float32)
 
             dual = self.dual.minimize(self.features, self.data['r'])
 
@@ -355,21 +346,21 @@ class REPS:
 
             ent = self.ctl.entropy()
 
-            rwrd = torch.mean(self.data['r']).numpy()
-            # rwrd = torch.mean(eval['r']).numpy()
+            # rwrd = torch.mean(self.data['r'])
+            rwrd = torch.mean(eval['r'])
 
-            _trace['rwrd'].append(rwrd)
-            _trace['dual'].append(dual)
-            _trace['ploss'].append(ploss)
-            _trace['klm'].append(kl)
-            _trace['ent'].append(ent)
+            _trace['rwrd'].append(to_npy(rwrd))
+            _trace['dual'].append(to_npy(dual))
+            _trace['ploss'].append(to_npy(ploss))
+            _trace['kl'].append(to_npy(kl))
+            _trace['ent'].append(to_npy(ent))
 
             if verbose:
                 print('it=', it,
-                      f'rwrd={rwrd:{5}.{4}}',
-                      f'dual={dual:{5}.{4}}',
-                      f'ploss={ploss:{5}.{4}}',
-                      f'klm={kl:{5}.{4}}',
-                      f'ent={ent:{5}.{4}}')
+                      f'rwrd={to_npy(rwrd):{5}.{4}}',
+                      f'dual={to_npy(dual):{5}.{4}}',
+                      f'ploss={to_npy(ploss):{5}.{4}}',
+                      f'kl={to_npy(kl):{5}.{4}}',
+                      f'ent={to_npy(ent):{5}.{4}}')
 
         return _trace

@@ -7,6 +7,7 @@ from scipy import stats
 from scipy import special
 
 from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
 
 import random
 import copy
@@ -113,8 +114,12 @@ class Policy:
 
         psi = self.features(x)
 
-        _inv = np.linalg.inv(psi.T @ np.diag(w) @ psi + preg * np.eye(psi.shape[1]))
-        pol.K = u.T @ np.diag(w) @ psi @ _inv
+        reg = Ridge(alpha=preg, fit_intercept=False)
+        reg.fit(psi, u, sample_weight=w)
+        pol.K = reg.coef_
+
+        # _inv = np.linalg.inv(psi.T @ np.diag(w) @ psi + preg * np.eye(psi.shape[1]))
+        # pol.K = u.T @ np.diag(w) @ psi @ _inv
 
         std = u - pol.mean(x)
         pol.cov = np.sum(np.einsum('nk,n,nh->nkh', std, w, std), axis=0) / np.sum(w)
@@ -213,7 +218,8 @@ class Qfunction:
 class acREPS:
 
     def __init__(self, env,
-                 nb_samples, nb_keep, nb_rollouts,
+                 nb_samples, nb_keep,
+                 nb_rollouts, nb_steps,
                  kl_bound, discount, lmbda,
                  vreg, preg, cov0,
                  **kwargs):
@@ -225,7 +231,9 @@ class acREPS:
 
         self.nb_samples = nb_samples
         self.nb_keep = nb_keep
+
         self.nb_rollouts = nb_rollouts
+        self.nb_steps = nb_steps
 
         self.kl_bound = kl_bound
         self.discount = discount
@@ -300,7 +308,7 @@ class acREPS:
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.ulim, self.ulim))
+                x, r, done, _ = self.env.step(np.clip(u, -self.ulim, self.ulim))
                 if render:
                     self.env.render()
 
@@ -317,7 +325,7 @@ class acREPS:
 
             rollouts.append(roll)
 
-    def evaluate(self, nb_rollouts, stoch=False, render=False):
+    def evaluate(self, nb_rollouts, nb_steps, stoch=False, render=False):
         rollouts = []
 
         for n in range(nb_rollouts):
@@ -327,14 +335,13 @@ class acREPS:
 
             x = self.env.reset()
 
-            done = False
-            while not done:
+            for t in range(nb_steps):
                 u = self.ctl.actions(x, stoch)
 
                 roll['x'] = np.vstack((roll['x'], x))
                 roll['u'] = np.vstack((roll['u'], u))
 
-                x, r, done, _ = self.env.step(np.clip(u, - self.ulim, self.ulim))
+                x, r, done, _ = self.env.step(u)
                 if render:
                     self.env.render()
 
@@ -436,7 +443,7 @@ class acREPS:
         eta, omega = var[0], var[1:]
         w, _, max_adv = self.weights(eta, omega, phi, targets)
         g = eta * epsilon + max_adv + eta * np.log(np.mean(w, axis=0))
-        g = g + self.vreg * (omega.T @ omega)
+        g = g + self.vreg * np.sum(omega ** 2)
         return g
 
     def grad(self, var, epsilon, phi, targets):
@@ -485,7 +492,7 @@ class acREPS:
                   'ent': []}
 
         for it in range(nb_iter):
-            _, eval = self.evaluate(self.nb_rollouts)
+            _, eval = self.evaluate(self.nb_rollouts, self.nb_steps)
 
             self.rollouts, self.data = self.sample(self.nb_samples, self.nb_keep)
             self.vfeatures = self.featurize(self.data)
@@ -503,25 +510,22 @@ class acREPS:
                                        # np.hstack((1.0, self.vfunc.omega)),
                                        method='L-BFGS-B',
                                        jac=grad(self.dual),
-                                       args=(
-                                           self.kl_bound,
-                                           self.vfeatures,
-                                           self.targets),
+                                       args=(self.kl_bound,
+                                             self.vfeatures,
+                                             self.targets),
                                        bounds=((1e-8, 1e8), ) + ((-np.inf, np.inf), ) * self.nb_vfeat)
-
             self.eta, self.vfunc.omega = res.x[0], res.x[1:]
 
             # self.eta, self.vfunc.omega = 1.0, 1e-8 * np.random.randn(self.nb_vfeat)
             # for _ in range(250):
             #     res = sc.optimize.minimize(self.dual_eta,
             #                                self.eta,
-            #                                method='SLSQP',
+            #                                method='L-BFGS-B',
             #                                jac=grad(self.dual_eta),
-            #                                args=(
-            #                                    self.vfunc.omega,
-            #                                    self.kl_bound,
-            #                                    self.vfeatures,
-            #                                    self.targets),
+            #                                args=(self.vfunc.omega,
+            #                                      self.kl_bound,
+            #                                      self.vfeatures,
+            #                                      self.targets),
             #                                bounds=((1e-8, 1e8),),
             #                                options={'maxiter': 5})
             #     # print(res)
@@ -540,12 +544,10 @@ class acREPS:
             #                                self.vfunc.omega,
             #                                method='BFGS',
             #                                jac=grad(self.dual_omega),
-            #                                args=(
-            #                                    self.eta,
-            #                                    self.vfeatures,
-            #                                    self.targets),
+            #                                args=(self.eta,
+            #                                      self.vfeatures,
+            #                                      self.targets),
             #                                options={'maxiter': 100})
-            #
             #     # print(res)
             #     #
             #     # check = sc.optimize.check_grad(self.dual_omega,
