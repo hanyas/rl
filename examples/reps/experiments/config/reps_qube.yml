@@ -13,8 +13,8 @@ params:
   nb_steps: 500
   kl_bound: 0.05
   discount: 0.98
-  vreg: 1.e-16
-  preg: 1.e-16
+  vreg: 1e-16
+  preg: 1e-16
   cov0: 100.0
   nb_vfeat: 250
   nb_pfeat: 250

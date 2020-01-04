@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# @Filename: pendulum.py
-# @Date: 2019-07-15-15-37
-# @Author: Hany Abdulsamad
-# @Contact: hany@robot-learning.de
-
 import autograd.numpy as np
 import gym
 

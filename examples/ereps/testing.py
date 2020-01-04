@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# @Filename: testing
-# @Date: 2019-07-08-21-45
-# @Author: Hany Abdulsamad
-# @Contact: hany@robot-learning.de
-
 from rl.ereps import eREPS
 from rl.envs import Sphere
 
