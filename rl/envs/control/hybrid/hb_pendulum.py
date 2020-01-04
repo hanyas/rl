@@ -17,7 +17,7 @@ class HybridPendulum(gym.Env):
     def __init__(self, rarhmm):
         self.dm_state = 2
         self.dm_act = 1
-        self.dm_obs = 3
+        self.dm_obs = 2
 
         # g = [th, thd]
         self._goal = np.array([0., 0.])
@@ -27,19 +27,23 @@ class HybridPendulum(gym.Env):
         self._state_max = np.array([np.inf, 8.0])
 
         # o = [cos, sin, thd]
-        self._obs_max = np.array([1.0, 1.0, 8.0])
+        self._obs_max = np.array([np.inf, 8.0])
         self.observation_space = spaces.Box(low=-self._obs_max,
                                             high=self._obs_max)
 
         self._act_weight = - np.array([1.e-3])
-        self._act_max = 2.
+        self._act_max = 2.5
         self.action_space = spaces.Box(low=-self._act_max,
                                        high=self._act_max, shape=(1,))
 
+        rarhmm.learn_ctl = False
         self.rarhmm = rarhmm
 
-        self.belief = None
         self.obs = None
+
+        self.hist_obs = np.empty((0, self.dm_obs))
+        self.hist_act = np.empty((0, self.dm_act))
+
         self.np_random = None
 
         self.seed()
@@ -53,42 +57,21 @@ class HybridPendulum(gym.Env):
         return self._act_max
 
     @property
-    def dt(self):
-        return self._dt
-
-    @property
     def goal(self):
         return self._goal
 
-    def filter(self, b, x, u):
-        trans = np.exp(self.rarhmm.transitions.log_likelihood(x, u)[0])
-        bn = np.einsum('mk,m->k', trans, b)
-        # zn = np.random.choice(self.rarhmm.nb_states, p=bn)
+    def dynamics(self, xhist, uhist):
+        xhist = np.atleast_2d(xhist)
+        uhist = np.atleast_2d(uhist)
 
-        # for plotting
-        zn = np.argmax(bn)
-        return zn, bn
+        # filter hidden state
+        b = self.rarhmm.filter(xhist, uhist)[0][-1, ...]
 
-    def evolve(self, z, x, u):
-        # xn = self.rarhmm.observations.sample(z, x, u)
+        # evolve dynamics
+        x, u = xhist[-1, :], uhist[-1, :]
+        zn, xn = self.rarhmm.step(x, u, b, stoch=False, mix=False)
 
-        # for plotting
-        xn = self.rarhmm.observations.mean(z, x, u)
-        return xn
-
-    def dynamics(self, b, x, u):
-        # filter
-        zn, bn = self.filter(b, x, u)
-
-        # evolve
-        xn = self.evolve(zn, x, u)
-
-        return bn, xn
-
-    def observe(self, x):
-        return np.array([np.cos(x[0]),
-                         np.sin(x[0]),
-                         x[1]])
+        return zn, xn
 
     def rewrad(self, x, u):
         _x = end2ang(x)
@@ -99,33 +82,71 @@ class HybridPendulum(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def step(self, u):
+    def step(self, act):
         # apply action constraints
-        _u = np.clip(u, -self._act_max, self._act_max)
+        _act = np.clip(act, -self._act_max, self._act_max)
+        self.hist_act = np.vstack((self.hist_act, _act))
 
         # compute reward
-        rwrd = self.rewrad(self.obs, _u)
+        rwrd = self.rewrad(self.obs, _act)
 
         # evolve dynamics
-        self.belief, self.obs = self.dynamics(self.belief, self.obs, _u)
+        _, self.obs = self.dynamics(self.hist_obs, self.hist_act)
+        self.hist_obs = np.vstack((self.hist_obs, self.obs))
 
         return self.obs, rwrd, False, {}
 
     def reset(self):
-        self.obs = self.rarhmm.init_observation.sample(z=0)
-        self.belief = self.rarhmm.init_state.likelihood()
+        self.hist_obs = np.empty((0, self.dm_obs))
+        self.hist_act = np.empty((0, self.dm_act))
+
+        _state = self.rarhmm.init_state.sample()
+        self.obs = self.rarhmm.init_observation.sample(z=_state)
+
+        self.hist_obs = np.vstack((self.hist_obs, self.obs))
+
         return self.obs
 
-    # following functions for plotting
-    def fake_reset(self, state):
-        self.obs = self.observe(state)
-        self.belief = self.rarhmm.init_state.likelihood()
+    # following function for plotting
+    def fake_step(self, value, act):
+        # switch to observation space
+        _obs = value
 
-    def fake_step(self, u):
         # apply action constraints
-        _u = np.clip(u, -self._act_max, self._act_max)
+        _act = np.clip(act, -self._act_max, self._act_max)
 
         # evolve dynamics
-        self.belief, self.obs = self.dynamics(self.belief, self.obs, _u)
+        _nxt_state, _nxt_obs = self.dynamics(_obs, _act)
 
-        return end2ang(self.obs)
+        return _nxt_state, _nxt_obs
+
+
+class HybridPendulumWithCartesianObservation(HybridPendulum):
+
+    def __init__(self, rarhmm):
+        super(HybridPendulumWithCartesianObservation, self).__init__(rarhmm)
+        self.dm_obs = 3
+
+        # o = [cos, sin, thd]
+        self._obs_max = np.array([1., 1., 8.0])
+        self.observation_space = spaces.Box(low=-self._obs_max,
+                                            high=self._obs_max)
+
+    def observe(self, x):
+        return np.array([np.cos(x[0]),
+                         np.sin(x[0]),
+                         x[1]])
+
+    # following function for plotting
+    def fake_step(self, value, act):
+        # switch to observation space
+        _obs = self.observe(value)
+
+        # apply action constraints
+        _act = np.clip(act, -self._act_max, self._act_max)
+
+        # evolve dynamics
+        _nxt_state, _nxt_obs = self.dynamics(_obs, _act)
+
+        return _nxt_state, end2ang(_nxt_obs)
+

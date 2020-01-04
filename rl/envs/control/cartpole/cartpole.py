@@ -3,7 +3,10 @@ from gym import spaces
 from gym.utils import seeding
 
 import autograd.numpy as np
-from autograd import jacobian
+
+
+def normalize(x):
+    return ((x + np.pi) % (2. * np.pi)) - np.pi
 
 
 class Cartpole(gym.Env):
@@ -14,24 +17,29 @@ class Cartpole(gym.Env):
 
         self._dt = 0.01
 
-        self._x0 = np.array([0., np.pi, 0., 0.])
-        self._sigma_0 = 1.e-4 * np.eye(self.dm_state)
+        self._sigma = 1.e-4
 
-        self._sigma = 1.e-4 * np.eye(self.dm_state)
+        self._global = True
 
         # g = [x, th, dx, dth]
-        self._goal = np.array([0., 2. * np.pi, 0., 0.])
-        self._goal_weight = np.array([1.e-1, 1.e1, 1.e-1, 1.e-1])
+        self._goal = np.array([0., 0., 0., 0.])
+        self._goal_weight = - np.array([1e0, 2e0, 1e-1, 1e-1])
 
         # x = [x, th, dx, dth]
-        self._state_max = np.array([0., np.inf, 25., 25.])
-        self.observation_space = spaces.Box(low=-self._state_max,
-                                            high=self._state_max)
+        self._state_max = np.array([10., np.inf, 5., 10.])
 
-        self._act_weight = np.array([1.e-3])
+        # x = [x, th, dx, dth]
+        self._obs_max = np.array([10., np.inf, 5., 10.])
+        self.observation_space = spaces.Box(low=-self._obs_max,
+                                            high=self._obs_max)
+
+        self._act_weight = - np.array([1e-2])
         self._act_max = 5.0
         self.action_space = spaces.Box(low=-self._act_max,
                                        high=self._act_max, shape=(1,))
+
+        self.state = None
+        self.np_random = None
 
         self.seed()
 
@@ -51,14 +59,8 @@ class Cartpole(gym.Env):
     def goal(self):
         return self._goal
 
-    def init(self):
-        # mu, sigma
-        return self._x0, self._sigma_0
-
     def dynamics(self, x, u):
-        _u = np.clip(u, -self._act_max, self._act_max)
-
-        # import from: https://github.com/JoeMWatson/input-inference-for-control/
+        # Equations: http://coneural.org/florian/papers/05_cart_pole.pdf
         # x = [x, th, dx, dth]
         g = 9.81
         Mc = 0.37
@@ -71,70 +73,96 @@ class Cartpole(gym.Env):
         sth = np.sin(th)
         cth = np.cos(th)
 
-        _num = - Mp * l * sth * dth2 + Mt * g * sth - _u * cth
-        _denom = l * ((4. / 3.) * Mt - Mp * cth ** 2)
+        _num = g * sth + cth * (- u - Mp * l * dth2 * sth) / Mt
+        _denom = l * ((4. / 3.) - Mp * cth**2 / Mt)
         th_acc = _num / _denom
-        x_acc = (Mp * l * sth * dth2 - Mp * l * th_acc * cth + _u) / Mt
 
-        xn = np.hstack((x[0] + self._dt * (x[2] + self._dt * x_acc),
-                       x[1] + self._dt * (x[3] + self._dt * th_acc),
-                       x[2] + self._dt * x_acc,
-                       x[3] + self._dt * th_acc))
+        x_acc = (u + Mp * l * (dth2 * sth - th_acc * cth)) / Mt
 
-        xn = np.clip(xn, -self._state_max, self._state_max)
+        xn = np.hstack((x[0] + self._dt * x[2],
+                        x[1] + self._dt * x[3],
+                        x[2] + self._dt * x_acc,
+                        x[3] + self._dt * th_acc))
         return xn
 
-    def features(self, x):
-        return x
-
-    def features_jacobian(self, x):
-        _J = jacobian(self.features, 0)
-        _j = self.features(x) - _J(x) @ x
-        return _J, _j
+    def observe(self, x):
+        return np.array([x[0], normalize(x[1]), x[2], x[3]])
 
     def noise(self, x=None, u=None):
-        _u = np.clip(u, -self._act_max, self._act_max)
-        _x = np.clip(x, -self._state_max, self._state_max)
-        return self._sigma
+        return self._sigma * np.eye(self.dm_state)
 
-    # xref is a hack to avoid autograd diffing through the jacobian
-    def cost(self, x, u, a, xref):
-        if a:
-            _J, _j = self.features_jacobian(xref)
-            _x = _J(xref) @ x + _j
-            return (_x - self._goal).T @ np.diag(self._goal_weight) @ (_x - self._goal) + u.T @ np.diag(self._act_weight) @ u
-        else:
-            return u.T @ np.diag(self._act_weight) @ u
+    def rewrad(self, x, u):
+        _x = np.array([x[0], normalize(x[1]), x[2], x[3]])
+        return (_x - self._goal).T @ np.diag(self._goal_weight) @ (_x - self._goal)\
+               + u.T @ np.diag(self._act_weight) @ u
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
     def step(self, u):
+        # apply action constraints
+        _u = np.clip(u, -self._act_max, self._act_max)
+
         # state-action dependent noise
         _sigma = self.noise(self.state, u)
+
         # evolve deterministic dynamics
-        self.state = self.dynamics(self.state, u)
+        _xn = self.dynamics(self.state, _u)
+
+        # apply state constraints
+        _xn = np.clip(_xn, -self._state_max, self._state_max)
+
+        # compute reward
+        rwrd = self.rewrad(self.state, _u)
+
         # add noise
-        self.state = self.np_random.multivariate_normal(mean=self.state, cov=_sigma)
-        return self.state, [], False, {}
+        self.state = self.np_random.multivariate_normal(mean=_xn, cov=_sigma)
+
+        return self.observe(self.state), rwrd, False, {}
 
     def reset(self):
-        _mu_0, _sigma_0 = self.init()
-        self.state = self.np_random.multivariate_normal(mean=_mu_0, cov=_sigma_0)
-        return self.state
+        if self._global:
+            _low = np.array([0.0, -np.pi, 0.0, -1.0])
+            _high = np.array([0.0, np.pi, 0.0, 1.0])
+        else:
+            _low, _high = np.array([-0.1, np.pi - np.pi / 18., -0.1, -1.0]),\
+                          np.array([0.1, np.pi + np.pi / 18., 0.1, 1.0])
+
+        self.state = self.np_random.uniform(low=_low, high=_high)
+        return self.observe(self.state)
+
+    # following functions for plotting
+    def fake_step(self, x, u):
+        # apply action constraints
+        _u = np.clip(u, -self._act_max, self._act_max)
+
+        # state-action dependent noise
+        _sigma = self.noise(x, _u)
+
+        # evolve deterministic dynamics
+        _xn = self.dynamics(x, _u)
+
+        # apply state constraints
+        _xn = np.clip(_xn, -self._state_max, self._state_max)
+
+        return self.observe(_xn)
 
 
-class CartpoleWithCartesianCost(Cartpole):
+class CartpoleWithCartesianObservation(Cartpole):
 
     def __init__(self):
-        super(CartpoleWithCartesianCost, self).__init__()
+        super(CartpoleWithCartesianObservation, self).__init__()
+        self.dm_obs = 5
 
-        # g = [x, cs_th, sn_th, dx, dth]
-        self._goal = np.array([1e-1, 1., 0., 0., 0.])
-        self._goal_weight = np.array([1.e-1, 1.e1, 1.e-1, 1.e-1, 1.e-1])
+        # o = [x, cos, sin, xd, thd]
+        self._obs_max = np.array([5., 1., 1., 5., 10.])
+        self.observation_space = spaces.Box(low=-self._obs_max,
+                                            high=self._obs_max)
 
-    def features(self, x):
+    def observe(self, x):
         return np.array([x[0],
-                        np.cos(x[1]), np.sin(x[1]),
-                        x[2], x[3]])
+                         np.cos(x[1]),
+                         np.sin(x[1]),
+                         x[2],
+                         x[3]])

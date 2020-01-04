@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# @Filename: cartpole
-# @Date: 2019-05-27-22-23
-# @Author: Hany Abdulsamad
-# @Contact: hany@robot-learning.de
-
 import gym
 from gym import spaces
 from gym.utils import seeding
@@ -16,7 +9,7 @@ def normalize(x):
     return ((x + np.pi) % (2. * np.pi)) - np.pi
 
 
-class CartPole(gym.Env):
+class Cartpole(gym.Env):
 
     def __init__(self):
         self.dm_state = 2
