@@ -56,7 +56,7 @@ class Policy:
         diff = x - pol.mu
         tmp = np.einsum('nk,n,nh->nkh', diff, w, diff)
         pol.cov = (np.sum(tmp, axis=0) + eta * self.cov +
-               eta * np.outer(pol.mu - self.mu, pol.mu - self.mu)) / (np.sum(w, axis=0) + eta)
+                   eta * np.outer(pol.mu - self.mu, pol.mu - self.mu)) / (np.sum(w, axis=0) + eta)
 
         return pol
 
@@ -87,11 +87,8 @@ class eREPS:
         self.n_episodes = n_episodes
         self.kl_bound = kl_bound
 
-        if 'cov0' in kwargs:
-            cov0 = kwargs.get('cov0', False)
-            self.ctl = Policy(self.dm_act, cov0)
-        else:
-            self.ctl = Policy(self.dm_act, 100.0)
+        cov0 = kwargs.get('cov0', 100.0)
+        self.ctl = Policy(self.dm_act, cov0)
 
         self.data = None
         self.w = None
@@ -136,9 +133,8 @@ class eREPS:
                                        method='SLSQP',
                                        jac=self.grad,
                                        # jac=grad(self.dual),
-                                       args=(
-                                           self.kl_bound,
-                                           self.data['r']),
+                                       args=(self.kl_bound,
+                                             self.data['r']),
                                        bounds=((1e-8, 1e8),))
 
             self.eta = res.x
